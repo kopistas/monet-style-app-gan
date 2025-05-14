@@ -325,6 +325,44 @@
             border-radius: var(--border-radius);
         }
 
+        .model-status {
+            display: inline-block;
+            font-size: 0.9rem;
+            padding: 0.3rem 0.6rem;
+            border-radius: 50px;
+            margin-left: 1rem;
+            font-weight: 500;
+        }
+
+        .model-status.unloaded {
+            background-color: #e0e0e0;
+            color: #666;
+        }
+
+        .model-status.loading {
+            background-color: #ffca80;
+            color: #995500;
+            animation: pulse 1.5s infinite;
+        }
+
+        .model-status.loaded {
+            background-color: #a8e6cf;
+            color: #2d6a4f;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.7; }
+            50% { opacity: 1; }
+            100% { opacity: 0.7; }
+        }
+
+        .processing-time {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 0.5rem;
+            font-style: italic;
+        }
+
         @media (max-width: 768px) {
             .container {
                 padding: 1rem;
@@ -345,7 +383,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>Трансформация в стиле Моне</h1>
+            <h1>Трансформация в стиле Моне <span id="model-status" class="model-status unloaded">Модель не загружена</span></h1>
             <p>Превратите ваши фотографии в произведения искусства в стиле Моне с помощью ИИ</p>
         </div>
 
@@ -376,6 +414,10 @@
         <div class="loading" id="loading">
             <i class="fas fa-palette"></i>
             <p class="loader-text">Трансформация изображения в стиль Моне...</p>
+            <div id="model-loading-indicator" style="display: none; margin-bottom: 10px; background-color: rgba(255, 193, 7, 0.1); padding: 10px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                <i class="fas fa-cog fa-spin" style="color: #ffc107; margin-right: 8px;"></i>
+                <span style="color: #856404; font-weight: 500;">Загрузка модели...</span>
+            </div>
             <div class="loading-stage" id="loading-stage">Подготовка изображения...</div>
             <div class="loading-progress">
                 <div class="loading-progress-bar"></div>
@@ -389,6 +431,7 @@
 
         <div class="results-container" id="results-container">
             <h2 class="results-heading">Результаты</h2>
+            <div class="processing-time" id="processing-time"></div>
             <div class="results">
                 <div class="result-item">
                     <h3>Исходное изображение</h3>
@@ -416,6 +459,14 @@
         const resultsContainer = document.getElementById('results-container');
         const originalImg = document.getElementById('original-img');
         const generatedImg = document.getElementById('generated-img');
+        const modelStatusEl = document.getElementById('model-status');
+        const processingTimeEl = document.getElementById('processing-time');
+
+        // Poll for model status initially and periodically during processing
+        let modelStatusInterval = null;
+
+        // Check model status initially
+        checkModelStatus();
 
         // Event Listeners
         browseBtn.addEventListener('click', () => fileInput.click());
@@ -432,6 +483,60 @@
         window.addEventListener('DOMContentLoaded', () => {
             fetchUnsplashPhotos('landscape');
         });
+
+        // Function to check model status
+        function checkModelStatus() {
+            fetch('/api/model-status')
+                .then(response => response.json())
+                .then(data => {
+                    updateModelStatusUI(data.status);
+                })
+                .catch(error => {
+                    console.error('Error checking model status:', error);
+                    updateModelStatusUI('error');
+                });
+        }
+
+        // Update model status UI
+        function updateModelStatusUI(status) {
+            modelStatusEl.className = 'model-status ' + status;
+            
+            if (status === 'loading') {
+                modelStatusEl.textContent = 'Загрузка модели...';
+            } else if (status === 'loaded') {
+                modelStatusEl.textContent = 'Модель загружена';
+            } else if (status === 'unloaded') {
+                modelStatusEl.textContent = 'Модель не загружена';
+            } else {
+                modelStatusEl.textContent = 'Ошибка статуса модели';
+                modelStatusEl.className = 'model-status error';
+            }
+        }
+
+        // Start polling model status
+        function startModelStatusPolling() {
+            if (modelStatusInterval) clearInterval(modelStatusInterval);
+            
+            checkModelStatus();
+            checkModelStatusForLoading();
+            
+            modelStatusInterval = setInterval(() => {
+                checkModelStatus();
+                
+                // Only update loading indicator if loader is visible
+                if (loadingEl.style.display === 'block') {
+                    checkModelStatusForLoading();
+                }
+            }, 2000);
+        }
+
+        // Stop polling model status
+        function stopModelStatusPolling() {
+            if (modelStatusInterval) {
+                clearInterval(modelStatusInterval);
+                modelStatusInterval = null;
+            }
+        }
 
         // Handle drag and drop events
         function handleDragOver(e) {
@@ -484,6 +589,9 @@
             // Show loading animation
             showLoading();
             
+            // Start polling for model status
+            startModelStatusPolling();
+            
             // Update loading stage texts periodically to show progress
             const loadingStages = [
                 "Подготовка изображения...",
@@ -521,11 +629,15 @@
             })
             .then(data => {
                 clearInterval(stageInterval);
+                stopModelStatusPolling();
                 displayResults(data);
+                checkModelStatus(); // Check status one more time after processing
             })
             .catch(error => {
                 clearInterval(stageInterval);
+                stopModelStatusPolling();
                 showError(error.message);
+                checkModelStatus(); // Check status one more time after error
             })
             .finally(() => {
                 clearInterval(stageInterval);
@@ -537,6 +649,9 @@
         function processImageUrl(url) {
             // Show loading animation
             showLoading();
+            
+            // Start polling for model status
+            startModelStatusPolling();
             
             // Update loading stage texts periodically to show progress
             const loadingStages = [
@@ -578,11 +693,15 @@
             })
             .then(data => {
                 clearInterval(stageInterval);
+                stopModelStatusPolling();
                 displayResults(data);
+                checkModelStatus(); // Check status one more time after processing
             })
             .catch(error => {
                 clearInterval(stageInterval);
+                stopModelStatusPolling();
                 showError(error.message);
+                checkModelStatus(); // Check status one more time after error
             })
             .finally(() => {
                 clearInterval(stageInterval);
@@ -594,6 +713,15 @@
         function displayResults(data) {
             originalImg.src = `data:image/jpeg;base64,${data.original}`;
             generatedImg.src = `data:image/jpeg;base64,${data.generated}`;
+            
+            // Show processing time if available
+            if (data.processing_time) {
+                processingTimeEl.textContent = `Время обработки: ${data.processing_time} секунд`;
+                processingTimeEl.style.display = 'block';
+            } else {
+                processingTimeEl.style.display = 'none';
+            }
+            
             resultsContainer.style.display = 'block';
             
             // Scroll to results
@@ -663,6 +791,9 @@
             // Reset loading stage
             document.getElementById('loading-stage').textContent = "Подготовка изображения...";
             
+            // Check if model is loaded and show appropriate indicator
+            checkModelStatusForLoading();
+            
             // Disable scrolling on background
             document.body.style.overflow = 'hidden';
         }
@@ -673,6 +804,24 @@
             
             // Re-enable scrolling
             document.body.style.overflow = '';
+        }
+        
+        // Check model status specifically for loading indicator
+        function checkModelStatusForLoading() {
+            fetch('/api/model-status')
+                .then(response => response.json())
+                .then(data => {
+                    const modelLoadingIndicator = document.getElementById('model-loading-indicator');
+                    
+                    if (data.status === 'loading' || data.status === 'unloaded') {
+                        modelLoadingIndicator.style.display = 'block';
+                    } else {
+                        modelLoadingIndicator.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking model status for loading:', error);
+                });
         }
         
         // Show error message

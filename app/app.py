@@ -3,6 +3,8 @@ import io
 import base64
 import sys
 import logging
+import time
+import gc
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import torch
@@ -41,20 +43,9 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"Using device: {DEVICE}")
 
-# Load the model
-try:
-    logger.info(f"Attempting to load model from {MODEL_PATH}")
-    if not os.path.exists(MODEL_PATH):
-        logger.error(f"Model file not found at {MODEL_PATH}")
-        logger.info(f"Current working directory: {os.getcwd()}")
-        logger.info(f"Files in current directory: {os.listdir('.')}")
-        gen = None
-    else:
-        gen = torch.jit.load(MODEL_PATH, map_location=DEVICE).eval()
-        logger.info("Model loaded successfully")
-except Exception as e:
-    logger.error(f"Error loading model: {e}")
-    gen = None
+# Model variable initialized as None
+gen = None
+model_loading = False
 
 # Set up transforms
 prep = T.Compose([
@@ -68,19 +59,73 @@ denorm = lambda x: x.mul(0.5).add(0.5).clamp(0, 1)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def load_model():
+    """Load the model on demand"""
+    global gen, model_loading
+    
+    if gen is not None:
+        logger.info("Model already loaded")
+        return True
+    
+    if model_loading:
+        logger.info("Model is currently loading")
+        return False
+    
+    model_loading = True
+    logger.info(f"Loading model from {MODEL_PATH}")
+    
+    try:
+        if not os.path.exists(MODEL_PATH):
+            logger.error(f"Model file not found at {MODEL_PATH}")
+            logger.info(f"Current working directory: {os.getcwd()}")
+            logger.info(f"Files in current directory: {os.listdir('.')}")
+            model_loading = False
+            return False
+        
+        # Load the model
+        gen = torch.jit.load(MODEL_PATH, map_location=DEVICE).eval()
+        logger.info("Model loaded successfully")
+        model_loading = False
+        return True
+    except Exception as e:
+        logger.error(f"Error loading model: {e}")
+        model_loading = False
+        return False
+
+def unload_model():
+    """Unload the model to free memory"""
+    global gen
+    
+    if gen is None:
+        return
+    
+    logger.info("Unloading model to free memory")
+    gen = None
+    # Force garbage collection to ensure memory is freed
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    logger.info("Model unloaded")
+
 def process_image(image):
     """Process the image through the model and return base64 encoded results"""
-    if gen is None:
-        logger.error("Model not loaded, cannot process image")
-        return None
+    global gen
     
-    # Prepare the image
-    tin = prep(image).unsqueeze(0).to(DEVICE)
+    # Ensure model is loaded
+    if not load_model():
+        logger.error("Failed to load model, cannot process image")
+        return None, "Идет загрузка модели... Пожалуйста, повторите запрос через несколько секунд."
     
-    # Generate the Monet style image
     try:
+        # Prepare the image
+        tin = prep(image).unsqueeze(0).to(DEVICE)
+        
+        # Generate the Monet style image
+        start_time = time.time()
         with torch.no_grad():
             tout = gen(tin)[0].cpu()
+        processing_time = time.time() - start_time
+        logger.info(f"Image processed in {processing_time:.2f} seconds")
         
         # Convert to PIL Image
         out = T.ToPILImage()(denorm(tout))
@@ -95,18 +140,40 @@ def process_image(image):
         generated_base64 = base64.b64encode(buffered_generated.getvalue()).decode('utf-8')
         
         logger.info("Image processed successfully")
+        
+        # Unload model after processing
+        unload_model()
+        
         return {
             'original': original_base64,
-            'generated': generated_base64
-        }
+            'generated': generated_base64,
+            'processing_time': f"{processing_time:.2f}"
+        }, None
     except Exception as e:
         logger.error(f"Error processing image: {e}")
-        return None
+        return None, f"Ошибка при обработке изображения: {str(e)}"
 
 @app.route('/')
 def index():
     logger.info("Index page requested")
     return render_template('index.html')
+
+@app.route('/api/model-status', methods=['GET'])
+def model_status():
+    """Check if the model is loaded or currently loading"""
+    global gen, model_loading
+    
+    if model_loading:
+        status = "loading"
+    elif gen is not None:
+        status = "loaded"
+    else:
+        status = "unloaded"
+        
+    return jsonify({
+        "status": status,
+        "device": DEVICE
+    })
 
 @app.route('/api/transform', methods=['POST'])
 def transform_image():
@@ -132,11 +199,11 @@ def transform_image():
         # Open and process the image
         img = Image.open(file.stream).convert("RGB")
         logger.info(f"Processing image: {file.filename}")
-        result = process_image(img)
         
-        if result is None:
-            logger.error("Model could not process the image")
-            return jsonify({'error': 'Модель не может обработать изображение'}), 500
+        result, error = process_image(img)
+        
+        if error:
+            return jsonify({'error': error}), 500
         
         logger.info("Image transformed successfully")
         return jsonify(result)
@@ -164,11 +231,11 @@ def transform_url():
         
         # Open and process the image
         img = Image.open(io.BytesIO(response.content)).convert("RGB")
-        result = process_image(img)
         
-        if result is None:
-            logger.error("Model could not process the image from URL")
-            return jsonify({'error': 'Модель не может обработать изображение по URL'}), 500
+        result, error = process_image(img)
+        
+        if error:
+            return jsonify({'error': error}), 500
         
         logger.info("Image from URL transformed successfully")
         return jsonify(result)
@@ -221,7 +288,15 @@ def get_unsplash_photos():
 def health_check():
     """Simple endpoint to check if server is running"""
     logger.info("Health check endpoint called")
-    return jsonify({"status": "ok", "model_loaded": gen is not None, "message": "Сервер работает"})
+    global gen, model_loading
+    
+    status = "loading" if model_loading else ("loaded" if gen is not None else "unloaded")
+    
+    return jsonify({
+        "status": "ok", 
+        "model_status": status, 
+        "message": "Сервер работает"
+    })
 
 if __name__ == '__main__':
     print("Запуск сервера трансформации изображений в стиле Моне...")
