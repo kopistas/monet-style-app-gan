@@ -31,7 +31,8 @@ CORS(app)
 logger.info("Flask app created with CORS support")
 
 # Configuration
-MODEL_PATH = "photo2monet_fastcut_mark2.pt"
+# MODEL_PATH = "photo2monet_fastcut_mark2.pt"
+MODEL_PATH = "photo2monet_cyclegan_mark3.pt"
 UPLOAD_FOLDER = 'app/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 UNSPLASH_API_KEY = os.getenv('UNSPLASH_API_KEY', '')
@@ -107,52 +108,91 @@ def unload_model():
         torch.cuda.empty_cache()
     logger.info("Model unloaded")
 
-def process_image(image):
-    """Process the image through the model and return base64 encoded results"""
-    global gen
-    
-    # Ensure model is loaded
-    if not load_model():
-        logger.error("Failed to load model, cannot process image")
-        return None, "Идет загрузка модели... Пожалуйста, повторите запрос через несколько секунд."
-    
-    try:
-        # Prepare the image
-        tin = prep(image).unsqueeze(0).to(DEVICE)
-        
-        # Generate the Monet style image
-        start_time = time.time()
-        with torch.no_grad():
-            tout = gen(tin)[0].cpu()
-        processing_time = time.time() - start_time
-        logger.info(f"Image processed in {processing_time:.2f} seconds")
-        
-        # Convert to PIL Image
-        out = T.ToPILImage()(denorm(tout))
-        
-        # Convert both original and generated images to base64
-        buffered_original = io.BytesIO()
-        image.save(buffered_original, format="JPEG")
-        original_base64 = base64.b64encode(buffered_original.getvalue()).decode('utf-8')
-        
-        buffered_generated = io.BytesIO()
-        out.save(buffered_generated, format="JPEG")
-        generated_base64 = base64.b64encode(buffered_generated.getvalue()).decode('utf-8')
-        
-        logger.info("Image processed successfully")
-        
-        # Unload model after processing
-        unload_model()
-        
-        return {
-            'original': original_base64,
-            'generated': generated_base64,
-            'processing_time': f"{processing_time:.2f}"
-        }, None
-    except Exception as e:
-        logger.error(f"Error processing image: {e}")
-        return None, f"Ошибка при обработке изображения: {str(e)}"
+to_tensor = T.ToTensor()
+norm      = T.Normalize((0.5,)*3, (0.5,)*3)
+eps       = 1e-6
 
+# pre-compute a 2-D cosine window we’ll reuse for every tile (keeps RAM tiny)
+def _make_cosine_window(tile):
+    ramp = torch.hann_window(tile, periodic=False)      # 1-D raised-cosine
+    win  = torch.outer(ramp, ramp)                      # 2-D
+    return win.unsqueeze(0)                             # shape (1, H, W)
+
+COS_WIN_256 = _make_cosine_window(256)                 # cached weight map
+
+def stylize_tiles_cpu(pil_img, tile=256, stride=224):
+    """
+    CPU tiler with 32-px overlap and cosine feathering → no seams.
+    RAM impact is minimal (just one weight map the size of a tile).
+    """
+    global gen
+    w, h   = pil_img.size
+    canvas = torch.zeros(3, h, w)
+    weight = torch.zeros(1, h, w)
+
+    win = COS_WIN_256.to(canvas.dtype)
+
+    for y in range(0, h, stride):
+        for x in range(0, w, stride):
+            crop = pil_img.crop((x, y, x+tile, y+tile))
+            pad_w, pad_h = tile - crop.size[0], tile - crop.size[1]
+            if pad_w or pad_h:                                       # edge pads
+                crop = T.functional.pad(crop, (0, 0, pad_w, pad_h))
+
+            tin = norm(to_tensor(crop)).unsqueeze(0)                 # CPU tensor
+            with torch.no_grad():
+                tout = gen(tin)[0]                                   # [-1,1]
+
+            ow, oh = min(tile, w - x), min(tile, h - y)
+            # multiply by window for feathering
+            canvas[:, y:y+oh, x:x+ow] += tout[:, :oh, :ow] * win[:, :oh, :ow]
+            weight[:, y:y+oh, x:x+ow] += win[:, :oh, :ow]
+
+    blended = canvas / (weight + eps)
+    return T.ToPILImage()(blended.clamp(-1, 1).add(1).mul(0.5))
+
+
+# ---------- new process_image ----------------------------------------
+def process_image(image: Image.Image):
+    """
+    • ≤256 px  → fast path (single crop).
+    • >256 px → CPU tiling with 256-px tiles.
+    Returns (result-dict, None) or (None, error-msg).
+    """
+    global gen
+
+    if gen is None and not load_model():
+        return None, ("Идет загрузка модели... "
+                      "Пожалуйста, повторите запрос через несколько секунд.")
+
+    try:
+        t0 = time.time()
+
+        if max(image.size) <= 256:                       # small: old path
+            tin = prep(image).unsqueeze(0)               # stay on CPU
+            with torch.no_grad():
+                tout = gen(tin)[0]
+            out_img = T.ToPILImage()(denorm(tout))
+        else:                                            # large: tile path
+            out_img = stylize_tiles_cpu(image, tile=256, stride=224)
+
+        proc_time = time.time() - t0
+
+        # ---- base-64 encode -----------------------------------------
+        buf_in, buf_out = io.BytesIO(), io.BytesIO()
+        image.save(buf_in, format="JPEG")
+        out_img.save(buf_out, format="JPEG")
+
+        return {
+            "original":  base64.b64encode(buf_in.getvalue()).decode(),
+            "generated": base64.b64encode(buf_out.getvalue()).decode(),
+            "processing_time": f"{proc_time:.2f}"
+        }, None
+
+    except Exception as e:
+        logger.exception("Error processing image")
+        return None, f"Ошибка при обработке изображения: {e}"
+     
 @app.route('/')
 def index():
     logger.info("Index page requested")
