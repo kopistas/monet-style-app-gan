@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Трансформация в стиле Моне</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #6a50a7;
+            --primary-light: #8c7cb9;
+            --secondary-color: #ff9a5a;
+            --background-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --border-radius: 12px;
+            --box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            color: #666;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            padding: 2rem;
+            margin-bottom: 2rem;
+            transition: var(--transition);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        .upload-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .drag-area {
+            border: 2px dashed var(--primary-light);
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: var(--transition);
+            padding: 2rem;
+        }
+
+        .drag-area.active {
+            border-color: var(--primary-color);
+            background-color: rgba(106, 80, 167, 0.05);
+        }
+
+        .drag-area i {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+
+        .drag-area h3 {
+            font-size: 1.5rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .drag-area p {
+            font-size: 1rem;
+            color: #666;
+            text-align: center;
+        }
+
+        .drag-area button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.6rem 1.2rem;
+            border-radius: 50px;
+            font-size: 1rem;
+            cursor: pointer;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        .drag-area button:hover {
+            background-color: var(--primary-light);
+        }
+
+        .carousel-container {
+            margin-top: 2rem;
+        }
+
+        .carousel-container h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+
+        .search-bar {
+            display: flex;
+            margin-bottom: 1rem;
+        }
+
+        .search-bar input {
+            flex: 1;
+            padding: 0.8rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: var(--border-radius) 0 0 var(--border-radius);
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .search-bar button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0 1.5rem;
+            border-radius: 0 var(--border-radius) var(--border-radius) 0;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .search-bar button:hover {
+            background-color: var(--primary-light);
+        }
+
+        .carousel {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .carousel-item {
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--box-shadow);
+            cursor: pointer;
+            transition: var(--transition);
+            height: 150px;
+            position: relative;
+        }
+
+        .carousel-item:hover {
+            transform: scale(1.05);
+        }
+
+        .carousel-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .results-container {
+            display: flex;
+            flex-direction: column;
+            margin-top: 2rem;
+            display: none;
+        }
+
+        .results-heading {
+            text-align: center;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+
+        .results {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+            justify-content: center;
+        }
+
+        .result-item {
+            flex: 1;
+            min-width: 300px;
+            max-width: 500px;
+        }
+
+        .result-item h3 {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            text-align: center;
+            color: var(--primary-color);
+        }
+
+        .result-img {
+            width: 100%;
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 2rem 0;
+            padding: 2rem;
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: var(--border-radius);
+            box-shadow: var(--box-shadow);
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+            display: none;
+        }
+
+        .loading i {
+            font-size: 3rem;
+            color: var(--primary-color);
+            animation: spin 1s linear infinite;
+        }
+        
+        .loading-progress {
+            width: 100%;
+            height: 6px;
+            background-color: #e0e0e0;
+            border-radius: 3px;
+            margin: 1.5rem 0;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .loading-progress-bar {
+            position: absolute;
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, var(--primary-light), var(--primary-color));
+            animation: progress-animation 2s ease-in-out infinite;
+            border-radius: 3px;
+        }
+        
+        @keyframes progress-animation {
+            0% {
+                width: 0%;
+                left: 0;
+            }
+            50% {
+                width: 70%;
+                left: 10%;
+            }
+            100% {
+                width: 0%;
+                left: 100%;
+            }
+        }
+        
+        .loading-stage {
+            margin-bottom: 0.5rem;
+            color: var(--primary-color);
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader-text {
+            margin-top: 1rem;
+            font-size: 1.2rem;
+            color: var(--primary-color);
+        }
+
+        .error-container {
+            display: none;
+            color: #ff3860;
+            text-align: center;
+            margin: 2rem 0;
+            padding: 1rem;
+            border: 1px solid #ff3860;
+            border-radius: var(--border-radius);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .results {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .result-item {
+                min-width: unset;
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Трансформация в стиле Моне</h1>
+            <p>Превратите ваши фотографии в произведения искусства в стиле Моне с помощью ИИ</p>
+        </div>
+
+        <div class="card">
+            <div class="upload-container">
+                <div class="drag-area" id="drop-area">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <h3>Перетащите файл</h3>
+                    <p>Перетащите изображение сюда или нажмите для выбора файла</p>
+                    <button id="browse-btn">Выбрать файл</button>
+                    <input type="file" id="file-input" hidden accept="image/png, image/jpeg, image/jpg">
+                </div>
+            </div>
+
+            <div class="carousel-container">
+                <h2>Или выберите из Unsplash</h2>
+                <div class="search-bar">
+                    <input type="text" id="search-input" placeholder="Поиск изображений (например: пейзаж, город, природа)">
+                    <button id="search-btn"><i class="fas fa-search"></i></button>
+                </div>
+                <div class="carousel" id="unsplash-carousel">
+                    <!-- Unsplash images will be inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="loading-overlay" id="loading-overlay"></div>
+        <div class="loading" id="loading">
+            <i class="fas fa-palette"></i>
+            <p class="loader-text">Трансформация изображения в стиль Моне...</p>
+            <div class="loading-stage" id="loading-stage">Подготовка изображения...</div>
+            <div class="loading-progress">
+                <div class="loading-progress-bar"></div>
+            </div>
+        </div>
+
+        <div class="error-container" id="error-container">
+            <h3>Ошибка</h3>
+            <p id="error-message"></p>
+        </div>
+
+        <div class="results-container" id="results-container">
+            <h2 class="results-heading">Результаты</h2>
+            <div class="results">
+                <div class="result-item">
+                    <h3>Исходное изображение</h3>
+                    <img id="original-img" class="result-img" alt="Исходное изображение">
+                </div>
+                <div class="result-item">
+                    <h3>Стиль Моне</h3>
+                    <img id="generated-img" class="result-img" alt="Изображение в стиле Моне">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const dropArea = document.getElementById('drop-area');
+        const browseBtn = document.getElementById('browse-btn');
+        const fileInput = document.getElementById('file-input');
+        const searchInput = document.getElementById('search-input');
+        const searchBtn = document.getElementById('search-btn');
+        const unsplashCarousel = document.getElementById('unsplash-carousel');
+        const loadingEl = document.getElementById('loading');
+        const errorContainer = document.getElementById('error-container');
+        const errorMessage = document.getElementById('error-message');
+        const resultsContainer = document.getElementById('results-container');
+        const originalImg = document.getElementById('original-img');
+        const generatedImg = document.getElementById('generated-img');
+
+        // Event Listeners
+        browseBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+        dropArea.addEventListener('dragover', handleDragOver);
+        dropArea.addEventListener('dragleave', handleDragLeave);
+        dropArea.addEventListener('drop', handleDrop);
+        searchBtn.addEventListener('click', searchUnsplash);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') searchUnsplash();
+        });
+
+        // Load unsplash images on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchUnsplashPhotos('landscape');
+        });
+
+        // Handle drag and drop events
+        function handleDragOver(e) {
+            e.preventDefault();
+            dropArea.classList.add('active');
+        }
+
+        function handleDragLeave() {
+            dropArea.classList.remove('active');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            dropArea.classList.remove('active');
+            
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFileSelect(e);
+            }
+        }
+
+        // Handle file selection
+        function handleFileSelect(e) {
+            const file = fileInput.files[0];
+            
+            if (file) {
+                // Validate file type
+                const validTypes = ['image/jpeg', 'image/jpg', 'image/png'];
+                if (!validTypes.includes(file.type)) {
+                    showError('Пожалуйста, выберите корректный формат изображения (JPEG или PNG)');
+                    return;
+                }
+                
+                // Validate file size
+                if (file.size > 16 * 1024 * 1024) {
+                    showError('Размер файла должен быть меньше 16МБ');
+                    return;
+                }
+                
+                // Process the file
+                processFile(file);
+            }
+        }
+
+        // Process selected file
+        function processFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Show loading animation
+            showLoading();
+            
+            // Update loading stage texts periodically to show progress
+            const loadingStages = [
+                "Подготовка изображения...",
+                "Анализ стиля картины...",
+                "Применение мазков в стиле Моне...",
+                "Корректировка цветовой палитры...",
+                "Добавление импрессионистских штрихов...",
+                "Завершение работы..."
+            ];
+            
+            let stageIndex = 0;
+            const loadingStageEl = document.getElementById('loading-stage');
+            
+            const stageInterval = setInterval(() => {
+                stageIndex = (stageIndex + 1) % loadingStages.length;
+                loadingStageEl.textContent = loadingStages[stageIndex];
+                loadingStageEl.style.opacity = 0;
+                setTimeout(() => {
+                    loadingStageEl.style.opacity = 1;
+                }, 200);
+            }, 2000);
+            
+            // Call API to transform the image
+            fetch('/api/transform', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Не удалось обработать изображение');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                clearInterval(stageInterval);
+                displayResults(data);
+            })
+            .catch(error => {
+                clearInterval(stageInterval);
+                showError(error.message);
+            })
+            .finally(() => {
+                clearInterval(stageInterval);
+                hideLoading();
+            });
+        }
+
+        // Process image from URL
+        function processImageUrl(url) {
+            // Show loading animation
+            showLoading();
+            
+            // Update loading stage texts periodically to show progress
+            const loadingStages = [
+                "Подготовка изображения...",
+                "Анализ стиля картины...",
+                "Применение мазков в стиле Моне...",
+                "Корректировка цветовой палитры...",
+                "Добавление импрессионистских штрихов...",
+                "Завершение работы..."
+            ];
+            
+            let stageIndex = 0;
+            const loadingStageEl = document.getElementById('loading-stage');
+            
+            const stageInterval = setInterval(() => {
+                stageIndex = (stageIndex + 1) % loadingStages.length;
+                loadingStageEl.textContent = loadingStages[stageIndex];
+                loadingStageEl.style.opacity = 0;
+                setTimeout(() => {
+                    loadingStageEl.style.opacity = 1;
+                }, 200);
+            }, 2000);
+            
+            // Call API to transform the image from URL
+            fetch('/api/transform-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ url })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || 'Не удалось обработать изображение');
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                clearInterval(stageInterval);
+                displayResults(data);
+            })
+            .catch(error => {
+                clearInterval(stageInterval);
+                showError(error.message);
+            })
+            .finally(() => {
+                clearInterval(stageInterval);
+                hideLoading();
+            });
+        }
+
+        // Display results
+        function displayResults(data) {
+            originalImg.src = `data:image/jpeg;base64,${data.original}`;
+            generatedImg.src = `data:image/jpeg;base64,${data.generated}`;
+            resultsContainer.style.display = 'block';
+            
+            // Scroll to results
+            resultsContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Search Unsplash
+        function searchUnsplash() {
+            const query = searchInput.value.trim() || 'landscape';
+            fetchUnsplashPhotos(query);
+        }
+
+        // Fetch photos from Unsplash
+        function fetchUnsplashPhotos(query) {
+            unsplashCarousel.innerHTML = '<p>Загрузка изображений...</p>';
+            
+            fetch(`/api/unsplash-photos?query=${encodeURIComponent(query)}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Не удалось загрузить фотографии из Unsplash');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    renderUnsplashPhotos(data.results);
+                })
+                .catch(error => {
+                    unsplashCarousel.innerHTML = `<p>Ошибка: ${error.message}</p>`;
+                });
+        }
+
+        // Render Unsplash photos in carousel
+        function renderUnsplashPhotos(photos) {
+            if (!photos || photos.length === 0) {
+                unsplashCarousel.innerHTML = '<p>Изображения не найдены. Попробуйте другой поисковый запрос.</p>';
+                return;
+            }
+            
+            unsplashCarousel.innerHTML = '';
+            
+            photos.forEach(photo => {
+                const imageUrl = photo.urls.regular;
+                
+                const carouselItem = document.createElement('div');
+                carouselItem.className = 'carousel-item';
+                
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                img.alt = photo.alt_description || 'Unsplash Photo';
+                
+                carouselItem.appendChild(img);
+                unsplashCarousel.appendChild(carouselItem);
+                
+                // Add click event to process the selected image
+                carouselItem.addEventListener('click', () => {
+                    processImageUrl(imageUrl);
+                });
+            });
+        }
+
+        // Show/hide loading animation
+        function showLoading() {
+            loadingEl.style.display = 'block';
+            document.getElementById('loading-overlay').style.display = 'block';
+            errorContainer.style.display = 'none';
+            
+            // Reset loading stage
+            document.getElementById('loading-stage').textContent = "Подготовка изображения...";
+            
+            // Disable scrolling on background
+            document.body.style.overflow = 'hidden';
+        }
+        
+        function hideLoading() {
+            loadingEl.style.display = 'none';
+            document.getElementById('loading-overlay').style.display = 'none';
+            
+            // Re-enable scrolling
+            document.body.style.overflow = '';
+        }
+        
+        // Show error message
+        function showError(message) {
+            errorContainer.style.display = 'block';
+            errorMessage.textContent = message;
+            resultsContainer.style.display = 'none';
+        }
+    </script>
+</body>
+</html> 

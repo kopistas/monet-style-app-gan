@@ -1,0 +1,16 @@
+version: '3'
+
+services:
+  web:
+    build: .
+    container_name: monet-style-transfer
+    ports:
+      - "5080:5080"
+    volumes:
+      - ./app:/app/app
+      - ./photo2monet_fastcut_mark2.pt:/app/photo2monet_fastcut_mark2.pt
+    environment:
+      - FLASK_APP=app/app.py
+      - FLASK_ENV=production
+      - UNSPLASH_API_KEY=${UNSPLASH_API_KEY}
+    restart: unless-stopped 
