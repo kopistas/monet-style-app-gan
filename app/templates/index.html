@@ -383,7 +383,7 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>Трансформация в стиле Моне <span id="model-status" class="model-status unloaded">Модель не загружена</span></h1>
+            <h1>Трансформация в стиле Моне</h1>
             <p>Превратите ваши фотографии в произведения искусства в стиле Моне с помощью ИИ</p>
         </div>
 
@@ -459,11 +459,11 @@
         const resultsContainer = document.getElementById('results-container');
         const originalImg = document.getElementById('original-img');
         const generatedImg = document.getElementById('generated-img');
-        const modelStatusEl = document.getElementById('model-status');
         const processingTimeEl = document.getElementById('processing-time');
 
         // Poll for model status initially and periodically during processing
         let modelStatusInterval = null;
+        let currentModelStatus = 'unloaded';
 
         // Check model status initially
         checkModelStatus();
@@ -489,28 +489,12 @@
             fetch('/api/model-status')
                 .then(response => response.json())
                 .then(data => {
-                    updateModelStatusUI(data.status);
+                    currentModelStatus = data.status;
                 })
                 .catch(error => {
                     console.error('Error checking model status:', error);
-                    updateModelStatusUI('error');
+                    currentModelStatus = 'error';
                 });
-        }
-
-        // Update model status UI
-        function updateModelStatusUI(status) {
-            modelStatusEl.className = 'model-status ' + status;
-            
-            if (status === 'loading') {
-                modelStatusEl.textContent = 'Загрузка модели...';
-            } else if (status === 'loaded') {
-                modelStatusEl.textContent = 'Модель загружена';
-            } else if (status === 'unloaded') {
-                modelStatusEl.textContent = 'Модель не загружена';
-            } else {
-                modelStatusEl.textContent = 'Ошибка статуса модели';
-                modelStatusEl.className = 'model-status error';
-            }
         }
 
         // Start polling model status
