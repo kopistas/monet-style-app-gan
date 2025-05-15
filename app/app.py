@@ -31,8 +31,7 @@ CORS(app)
 logger.info("Flask app created with CORS support")
 
 # Configuration
-# MODEL_PATH = "photo2monet_fastcut_mark2.pt"
-MODEL_PATH = "photo2monet_cyclegan_mark3.pt"
+MODEL_PATH = "photo2monet_cyclegan_mark4.pt"
 UPLOAD_FOLDER = 'app/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 UNSPLASH_API_KEY = os.getenv('UNSPLASH_API_KEY', '')

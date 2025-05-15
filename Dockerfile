@@ -13,8 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the model and app code
-COPY photo2monet_fastcut_mark2.pt .
-COPY photo2monet_cyclegan_mark3.pt .
+COPY photo2monet_cyclegan_mark4.pt .
 
 COPY app/ ./app/
 
