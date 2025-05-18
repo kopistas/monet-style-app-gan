@@ -471,11 +471,10 @@ def check_cluster_resources():
     
     return True
 
-def check_secrets_and_configmaps():
+def check_secrets_and_configmaps(namespaces=['monet-app', 'mlflow']):
     """Check if required secrets and configmaps exist"""
     print("\n=== Checking Secrets and ConfigMaps ===")
     
-    namespaces = ['monet-app', 'mlflow']
     for namespace in namespaces:
         print(f"  Checking namespace: {namespace}")
         
@@ -559,9 +558,15 @@ def main():
     parser = argparse.ArgumentParser(description='Verify deployment status')
     parser.add_argument('--timeout', type=int, default=300, help='Timeout in seconds for waiting for deployments')
     parser.add_argument('--skip-wait', action='store_true', help='Skip waiting for deployments to be available')
+    parser.add_argument('--namespaces', type=str, default='monet-app,mlflow', 
+                       help='Comma-separated list of namespaces to check (default: monet-app,mlflow)')
     args = parser.parse_args()
     
     print("Starting deployment verification...")
+    
+    # Parse namespaces
+    namespaces = args.namespaces.split(',')
+    print(f"Will check the following namespaces: {', '.join(namespaces)}")
     
     # Check kubectl configuration
     kubeconfig = os.environ.get('KUBECONFIG')
@@ -581,10 +586,9 @@ def main():
     check_cluster_resources()
     
     # Check secrets and configmaps
-    check_secrets_and_configmaps()
+    check_secrets_and_configmaps(namespaces)
     
     # Wait for deployments to be available (unless skipped)
-    namespaces = ['monet-app', 'mlflow']
     if not args.skip_wait:
         if not wait_for_deployments(namespaces, timeout=args.timeout):
             print("WARNING: Not all deployments are available, but continuing with verification")

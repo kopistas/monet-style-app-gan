@@ -69,7 +69,35 @@ jobs:
         working-directory: terraform
         run: |
           mkdir -p ../kubernetes/output
-          terraform output -json > ../kubernetes/output/terraform-output.json
+          # Save raw output to a file
+          terraform output -json > ../kubernetes/output/terraform-output-raw.json
+          
+          # Extract only the valid JSON part from the file
+          echo "Cleaning Terraform output file..."
+          # Look for the start of a JSON object and extract until the end of the JSON
+          sed -n '/^{/,/^}$/p' ../kubernetes/output/terraform-output-raw.json > ../kubernetes/output/terraform-output.json
+          
+          # If that didn't work, try extracting everything between the first { and last }
+          if ! jq empty ../kubernetes/output/terraform-output.json 2>/dev/null; then
+            echo "Using alternative extraction method..."
+            # Use awk to extract everything between first { and last }
+            awk 'BEGIN{flag=0} /^{/{flag=1} flag{print} /^}$/{flag=0}' ../kubernetes/output/terraform-output-raw.json > ../kubernetes/output/terraform-output.json
+          fi
+          
+          # If still not valid, try manual regeneration
+          if ! jq empty ../kubernetes/output/terraform-output.json 2>/dev/null; then
+            echo "Manual JSON extraction failed. Creating clean JSON..."
+            # Manually create a clean JSON file with the required values
+            echo "{" > ../kubernetes/output/terraform-output.json
+            terraform output -raw spaces_region 2>/dev/null | xargs -I{} echo "  \"spaces_region\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
+            terraform output -raw spaces_bucket_name 2>/dev/null | xargs -I{} echo "  \"spaces_bucket_name\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
+            terraform output -raw dns_configuration 2>/dev/null | xargs -I{} echo "  \"dns_configuration\": { \"value\": \"{}\" }" >> ../kubernetes/output/terraform-output.json
+            echo "}" >> ../kubernetes/output/terraform-output.json
+          fi
+          
+          # Show final file contents
+          echo "Final Terraform output file contents:"
+          cat ../kubernetes/output/terraform-output.json
 
       - name: Upload Kubernetes Config
         uses: actions/upload-artifact@v4
@@ -143,29 +171,85 @@ jobs:
 
       - name: Export Environment Variables
         run: |
-          # Try to read from Terraform output - fail if invalid
+          # Check if output file exists
+          echo "Validating Terraform output file..."
           if [ ! -f kubernetes/output/terraform-output.json ]; then
             echo "ERROR: Terraform output file not found. Terraform step likely failed."
             exit 1
           fi
           
-          # Validate JSON and extract values or fail
+          # Display file contents for debugging
+          echo "Terraform output file contents:"
+          cat kubernetes/output/terraform-output.json
+          
+          # If file exists but isn't valid JSON, try direct extraction of values
           if ! jq empty kubernetes/output/terraform-output.json 2>/dev/null; then
-            echo "ERROR: Terraform output file is not valid JSON. Check the Terraform step logs."
-            exit 1
+            echo "ERROR: Terraform output file is not valid JSON. Attempting direct extraction..."
+            
+            # Create a new clean file using grep to find the values
+            echo "Creating clean JSON with extracted values..."
+            echo "{" > kubernetes/output/terraform-output-clean.json
+            
+            # Extract spaces_region
+            REGION_LINE=$(grep -A 3 "spaces_region" kubernetes/output/terraform-output.json | grep "value" | head -1)
+            if [[ $REGION_LINE =~ \"value\":[[:space:]]*\"([^\"]+)\" ]]; then
+              REGION="${BASH_REMATCH[1]}"
+              echo "  \"spaces_region\": { \"value\": \"$REGION\" }," >> kubernetes/output/terraform-output-clean.json
+            else
+              echo "ERROR: Could not extract spaces_region value"
+              exit 1
+            fi
+            
+            # Extract spaces_bucket_name
+            BUCKET_LINE=$(grep -A 3 "spaces_bucket_name" kubernetes/output/terraform-output.json | grep "value" | head -1)
+            if [[ $BUCKET_LINE =~ \"value\":[[:space:]]*\"([^\"]+)\" ]]; then
+              BUCKET="${BASH_REMATCH[1]}"
+              echo "  \"spaces_bucket_name\": { \"value\": \"$BUCKET\" }," >> kubernetes/output/terraform-output-clean.json
+            else
+              echo "ERROR: Could not extract spaces_bucket_name value"
+              exit 1
+            fi
+            
+            # Extract dns_configuration
+            DNS_LINE=$(grep -A 3 "dns_configuration" kubernetes/output/terraform-output.json | grep "value" | head -1)
+            if [[ $DNS_LINE =~ \"value\":[[:space:]]*\"([^\"]+)\" ]]; then
+              DNS="${BASH_REMATCH[1]}"
+              echo "  \"dns_configuration\": { \"value\": \"$DNS\" }" >> kubernetes/output/terraform-output-clean.json
+            else
+              echo "No dns_configuration found, adding empty value"
+              echo "  \"dns_configuration\": { \"value\": \"\" }" >> kubernetes/output/terraform-output-clean.json
+            fi
+            
+            echo "}" >> kubernetes/output/terraform-output-clean.json
+            
+            # Replace the original file with the clean one
+            mv kubernetes/output/terraform-output-clean.json kubernetes/output/terraform-output.json
+            
+            echo "Clean JSON file created:"
+            cat kubernetes/output/terraform-output.json
           fi
           
           # Extract required values, fail if any are missing
-          DO_SPACES_REGION=$(jq -r '.spaces_region.value' kubernetes/output/terraform-output.json)
-          DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value' kubernetes/output/terraform-output.json)
+          echo "Extracting values..."
           
-          if [ "$DO_SPACES_REGION" = "null" ] || [ -z "$DO_SPACES_REGION" ]; then
-            echo "ERROR: spaces_region.value not found in Terraform output"
+          # Extract each value individually with detailed error checking
+          DO_SPACES_REGION=$(jq -r '.spaces_region.value // empty' kubernetes/output/terraform-output.json)
+          echo "Extracted DO_SPACES_REGION: '$DO_SPACES_REGION'"
+          
+          DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value // empty' kubernetes/output/terraform-output.json)
+          echo "Extracted DO_SPACES_NAME: '$DO_SPACES_NAME'"
+          
+          DNS_CONFIG=$(jq -r '.dns_configuration.value // empty' kubernetes/output/terraform-output.json)
+          echo "Extracted DNS_CONFIG: '$DNS_CONFIG'"
+          
+          # Fail if critical values are missing
+          if [ -z "$DO_SPACES_REGION" ]; then
+            echo "ERROR: spaces_region.value not found or empty in Terraform output"
             exit 1
           fi
           
-          if [ "$DO_SPACES_NAME" = "null" ] || [ -z "$DO_SPACES_NAME" ]; then
-            echo "ERROR: spaces_bucket_name.value not found in Terraform output"
+          if [ -z "$DO_SPACES_NAME" ]; then
+            echo "ERROR: spaces_bucket_name.value not found or empty in Terraform output"
             exit 1
           fi
           
@@ -180,10 +264,9 @@ jobs:
           echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
           
-          # Set DNS configuration or clear error message
-          DNS_CONFIG=$(jq -r '.dns_configuration.value // "null"' kubernetes/output/terraform-output.json)
-          if [ "$DNS_CONFIG" = "null" ]; then
-            echo "WARNING: dns_configuration.value not found in Terraform output"
+          # Set DNS configuration 
+          if [ -z "$DNS_CONFIG" ]; then
+            echo "WARNING: dns_configuration.value not found or empty in Terraform output"
             echo "DNS_CONFIG=Missing in Terraform output" >> $GITHUB_ENV
           else
             echo "DNS_CONFIG=$DNS_CONFIG" >> $GITHUB_ENV
@@ -206,21 +289,39 @@ jobs:
 
       - name: Apply Kubernetes Manifests - MLflow
         run: |
+          # MLflow deployment commented out to prevent public exposure
+          echo "Skipping MLflow deployment for security reasons"
+          
+          # Instead, actively remove any existing MLflow resources
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          echo "Removing existing MLflow deployment..."
           
-          # Apply MLflow manifests
-          envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
+          # Delete MLflow ingress
+          kubectl delete ingress -n mlflow mlflow --ignore-not-found=true
           
-          # Wait for MLflow PVC to be bound (give it up to 2 minutes)
-          echo "Waiting for MLflow PVC to be provisioned..."
-          kubectl wait --for=condition=Ready pvc/mlflow-database -n mlflow --timeout=120s || true
+          # Delete MLflow service
+          kubectl delete service -n mlflow mlflow --ignore-not-found=true
           
-          # Force rollout of MLflow deployment to apply changes
-          kubectl rollout restart deployment/mlflow -n mlflow
+          # Delete MLflow deployment
+          kubectl delete deployment -n mlflow mlflow --ignore-not-found=true
           
-          # Wait for initial pod creation but don't fail pipeline if it's not ready yet
-          echo "Waiting for initial MLflow pod creation..."
-          kubectl rollout status deployment/mlflow -n mlflow --timeout=30s || true
+          # Keep the namespace and PVC for future use, but don't deploy MLflow
+          echo "MLflow resources have been removed for security"
+          
+          # The following lines are commented out to prevent MLflow exposure:
+          # # Apply MLflow manifests
+          # envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
+          # 
+          # # Wait for MLflow PVC to be bound (give it up to 2 minutes)
+          # echo "Waiting for MLflow PVC to be provisioned..."
+          # kubectl wait --for=condition=Ready pvc/mlflow-database -n mlflow --timeout=120s || true
+          # 
+          # # Force rollout of MLflow deployment to apply changes
+          # kubectl rollout restart deployment/mlflow -n mlflow
+          # 
+          # # Wait for initial pod creation but don't fail pipeline if it's not ready yet
+          # echo "Waiting for initial MLflow pod creation..."
+          # kubectl rollout status deployment/mlflow -n mlflow --timeout=30s || true
 
       - name: Apply Kubernetes Manifests - Web App
         run: |
@@ -263,10 +364,10 @@ jobs:
           
           echo "Running deployment verification..."
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
-          python scripts/verify_deployment.py --timeout 600 --skip-wait
+          # Only verify monet-app namespace since MLflow is disabled
+          python scripts/verify_deployment.py --timeout 600 --skip-wait --namespaces monet-app
           
           echo "Verification complete!"
           
-          echo "You can access the applications at:"
-          echo "- MLflow: https://${{ env.MLFLOW_DOMAIN }}"
+          echo "You can access the application at:"
           echo "- Monet App: https://${{ env.APP_DOMAIN }}" 
