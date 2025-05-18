@@ -64,14 +64,14 @@ jobs:
           terraform output -json > ../kubernetes/output/terraform-output.json
 
       - name: Upload Kubernetes Config
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
           path: terraform/kubeconfig.yaml
           retention-days: 1
 
       - name: Upload Terraform Output
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: terraform-output
           path: kubernetes/output/terraform-output.json
@@ -114,13 +114,13 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Download Kubeconfig
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: .kube
 
       - name: Download Terraform Output
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: terraform-output
           path: kubernetes/output
