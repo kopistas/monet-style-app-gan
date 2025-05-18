@@ -64,12 +64,6 @@ resource "digitalocean_spaces_bucket" "model_storage" {
   acl    = "private"
 }
 
-# Create a Spaces access key
-resource "digitalocean_spaces_key" "model_storage_key" {
-  name        = "monet-storage-key"
-  space_name  = digitalocean_spaces_bucket.model_storage.name
-}
-
 # Create namespaces
 resource "kubernetes_namespace" "mlflow" {
   metadata {
@@ -83,7 +77,7 @@ resource "kubernetes_namespace" "monet_app" {
   }
 }
 
-# Create secrets for S3 access
+# Create secrets for S3 access using pre-existing DO Spaces keys
 resource "kubernetes_secret" "spaces_credentials" {
   metadata {
     name      = "spaces-credentials"
@@ -91,8 +85,8 @@ resource "kubernetes_secret" "spaces_credentials" {
   }
 
   data = {
-    access_key = digitalocean_spaces_key.model_storage_key.access_id
-    secret_key = digitalocean_spaces_key.model_storage_key.secret_key
+    access_key = var.do_spaces_access_key
+    secret_key = var.do_spaces_secret_key
   }
 }
 
@@ -103,8 +97,8 @@ resource "kubernetes_secret" "spaces_credentials_app" {
   }
 
   data = {
-    access_key = digitalocean_spaces_key.model_storage_key.access_id
-    secret_key = digitalocean_spaces_key.model_storage_key.secret_key
+    access_key = var.do_spaces_access_key
+    secret_key = var.do_spaces_secret_key
   }
 }
 
@@ -202,16 +196,6 @@ output "spaces_bucket_name" {
 
 output "spaces_region" {
   value = digitalocean_spaces_bucket.model_storage.region
-}
-
-output "spaces_access_key" {
-  value     = digitalocean_spaces_key.model_storage_key.access_id
-  sensitive = true
-}
-
-output "spaces_secret_key" {
-  value     = digitalocean_spaces_key.model_storage_key.secret_key
-  sensitive = true
 }
 
 output "load_balancer_ip" {

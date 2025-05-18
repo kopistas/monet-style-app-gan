@@ -43,6 +43,8 @@ jobs:
           TF_VAR_do_region: ${{ secrets.DO_REGION || 'fra1' }}
           TF_VAR_do_spaces_region: ${{ secrets.DO_SPACES_REGION || 'fra1' }}
           TF_VAR_do_spaces_name: ${{ secrets.DO_SPACES_NAME || 'monet-models' }}
+          TF_VAR_do_spaces_access_key: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          TF_VAR_do_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET_KEY }}
           TF_VAR_app_domain: ${{ secrets.APP_DOMAIN || 'monet-app.example.com' }}
           TF_VAR_mlflow_domain: ${{ secrets.MLFLOW_DOMAIN || 'mlflow.example.com' }}
           TF_VAR_unsplash_api_key: ${{ secrets.UNSPLASH_API_KEY || '' }}
@@ -55,6 +57,8 @@ jobs:
         env:
           DO_TOKEN: ${{ secrets.DO_TOKEN }}
           TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+          TF_VAR_do_spaces_access_key: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          TF_VAR_do_spaces_secret_key: ${{ secrets.DO_SPACES_SECRET_KEY }}
         run: terraform apply -auto-approve tfplan
 
       - name: Save Terraform Output

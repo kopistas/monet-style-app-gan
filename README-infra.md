@@ -19,16 +19,27 @@ The system consists of the following components:
 - GitHub account (for GitHub Actions)
 - DigitalOcean account
 - A domain name (optional, but recommended for setting up HTTPS)
+- DigitalOcean Spaces access keys (must be created manually in the DigitalOcean console)
 
 ## Setup Instructions
 
-### 1. Configure GitHub Repository Secrets
+### 1. Create DigitalOcean Spaces Keys
+
+Before deploying the infrastructure, you need to create Spaces access keys:
+
+1. Log in to your DigitalOcean account
+2. Go to API > Spaces Keys
+3. Click "Generate New Key"
+4. Enter a name (e.g., "monet-app-keys")
+5. Save the Access Key and Secret Key securely - you'll need them for GitHub secrets
+
+### 2. Configure GitHub Repository Secrets
 
 Add the following secrets to your GitHub repository:
 
 - `DO_TOKEN` - DigitalOcean API token with write access
-- `DO_SPACES_ACCESS_KEY` - DigitalOcean Spaces access key
-- `DO_SPACES_SECRET_KEY` - DigitalOcean Spaces secret key
+- `DO_SPACES_ACCESS_KEY` - DigitalOcean Spaces access key (created in step 1)
+- `DO_SPACES_SECRET_KEY` - DigitalOcean Spaces secret key (created in step 1)
 - `DO_REGION` - DigitalOcean region (e.g., `fra1`)
 - `DO_SPACES_REGION` - DigitalOcean Spaces region (e.g., `fra1`)
 - `DO_SPACES_NAME` - DigitalOcean Spaces bucket name (e.g., `monet-models`)
@@ -38,7 +49,7 @@ Add the following secrets to your GitHub repository:
 - `UNSPLASH_API_KEY` - Unsplash API key for the web app
 - `USE_DO_DNS` - Set to `true` to automatically configure DNS using DigitalOcean DNS (optional)
 
-### 2. Deploy Infrastructure
+### 3. Deploy Infrastructure
 
 The infrastructure is automatically deployed when you push to the `main` branch or manually trigger the GitHub Actions workflow.
 
@@ -48,7 +59,7 @@ To manually trigger the workflow:
 3. Select the "Deploy Infrastructure and Applications" workflow
 4. Click "Run workflow"
 
-### 3. DNS Configuration
+### 4. DNS Configuration
 
 #### Option 1: Automated DNS with DigitalOcean
 
@@ -71,7 +82,7 @@ If not using the automated DNS setup, you'll need to configure your DNS records 
    - `monet-app.example.com` → Load balancer IP
    - `mlflow.example.com` → Load balancer IP
 
-### 4. Using MLflow with Google Colab
+### 5. Using MLflow with Google Colab
 
 A sample training script for Google Colab is provided in `colab/mlflow_training_example.py`. To use it:
 
@@ -97,7 +108,7 @@ A sample training script for Google Colab is provided in `colab/mlflow_training_
        --learning-rate=0.0002
    ```
 
-### 5. Promoting Models to Production
+### 6. Promoting Models to Production
 
 To promote a model from MLflow to production and make the web app use it:
 

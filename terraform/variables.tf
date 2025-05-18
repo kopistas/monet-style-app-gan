@@ -22,6 +22,18 @@ variable "do_spaces_name" {
   default     = "monet-models"
 }
 
+variable "do_spaces_access_key" {
+  description = "DigitalOcean Spaces access key"
+  type        = string
+  sensitive   = true
+}
+
+variable "do_spaces_secret_key" {
+  description = "DigitalOcean Spaces secret key"
+  type        = string
+  sensitive   = true
+}
+
 variable "kubernetes_version" {
   description = "Kubernetes version to use"
   type        = string
