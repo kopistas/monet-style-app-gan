@@ -37,13 +37,13 @@ variable "do_spaces_secret_key" {
 variable "kubernetes_version" {
   description = "Kubernetes version to use"
   type        = string
-  default     = "1.29.1-do.0"
+  default     = "1.32.2-do.1"
 }
 
 variable "node_size" {
   description = "Droplet size for Kubernetes nodes"
   type        = string
-  default     = "s-2vcpu-4gb"
+  default     = "s-1vcpu-2gb"
 }
 
 variable "node_count" {
