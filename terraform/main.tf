@@ -64,10 +64,10 @@ resource "digitalocean_spaces_bucket" "model_storage" {
   acl    = "private"
 }
 
-# Create a Spaces access key for the bucket
-resource "digitalocean_spaces_access_key" "model_storage_key" {
+# Create a Spaces access key
+resource "digitalocean_spaces_key" "model_storage_key" {
   name        = "monet-storage-key"
-  description = "Access key for model storage"
+  space_name  = digitalocean_spaces_bucket.model_storage.name
 }
 
 # Create namespaces
@@ -91,8 +91,8 @@ resource "kubernetes_secret" "spaces_credentials" {
   }
 
   data = {
-    access_key = digitalocean_spaces_access_key.model_storage_key.key
-    secret_key = digitalocean_spaces_access_key.model_storage_key.secret
+    access_key = digitalocean_spaces_key.model_storage_key.access_id
+    secret_key = digitalocean_spaces_key.model_storage_key.secret_key
   }
 }
 
@@ -103,8 +103,8 @@ resource "kubernetes_secret" "spaces_credentials_app" {
   }
 
   data = {
-    access_key = digitalocean_spaces_access_key.model_storage_key.key
-    secret_key = digitalocean_spaces_access_key.model_storage_key.secret
+    access_key = digitalocean_spaces_key.model_storage_key.access_id
+    secret_key = digitalocean_spaces_key.model_storage_key.secret_key
   }
 }
 
@@ -205,12 +205,12 @@ output "spaces_region" {
 }
 
 output "spaces_access_key" {
-  value     = digitalocean_spaces_access_key.model_storage_key.key
+  value     = digitalocean_spaces_key.model_storage_key.access_id
   sensitive = true
 }
 
 output "spaces_secret_key" {
-  value     = digitalocean_spaces_access_key.model_storage_key.secret
+  value     = digitalocean_spaces_key.model_storage_key.secret_key
   sensitive = true
 }
 
