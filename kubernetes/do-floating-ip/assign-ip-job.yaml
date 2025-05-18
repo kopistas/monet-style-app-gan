@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: assign-floating-ip
+  namespace: kube-system
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      containers:
+      - name: do-api-client
+        image: bitnami/kubectl:latest
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          # Wait for NGINX Ingress service to get external IP
+          echo "Waiting for NGINX Ingress to get an external IP..."
+          
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+              
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "Found load balancer IP: $EXTERNAL_IP"
+              break
+            fi
+            
+            echo "Waiting for load balancer external IP (attempt $i/30)..."
+            sleep 10
+          done
+          
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "Failed to get load balancer IP after 5 minutes. Exiting."
+            exit 1
+          fi
+          
+          # Now call DigitalOcean API to get load balancers
+          echo "Finding load balancer ID for IP $EXTERNAL_IP..."
+          
+          # Install jq for JSON parsing
+          apt-get update && apt-get install -y curl jq
+          
+          LB_ID=$(curl -s -X GET \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${DO_API_TOKEN}" \
+            "https://api.digitalocean.com/v2/load_balancers" | \
+            jq -r ".load_balancers[] | select(.ip == \"$EXTERNAL_IP\") | .id")
+          
+          if [ -z "$LB_ID" ]; then
+            echo "Could not find load balancer ID. Exiting."
+            exit 1
+          fi
+          
+          echo "Found load balancer ID: $LB_ID"
+          
+          # Assign the floating IP to the load balancer
+          echo "Assigning floating IP ${FLOATING_IP} to load balancer $LB_ID..."
+          
+          RESULT=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${DO_API_TOKEN}" \
+            -d "{\"type\":\"assign\",\"assignment\":{\"load_balancer_id\":\"$LB_ID\"}}" \
+            "https://api.digitalocean.com/v2/floating_ips/${FLOATING_IP}/actions")
+          
+          echo "Assignment result: $RESULT"
+          
+          # Check if successful
+          if echo "$RESULT" | jq -e '.action.status == "in-progress"' > /dev/null; then
+            echo "Floating IP assignment initiated successfully."
+            exit 0
+          else
+            echo "Failed to assign floating IP. Result: $(echo $RESULT | jq -c .)"
+            exit 1
+          fi
+        env:
+        - name: DO_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: do-api-token
+              key: token
+        - name: FLOATING_IP
+          value: "${FLOATING_IP}"
+      restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: do-api-token
+  namespace: kube-system
+type: Opaque
+data:
+  token: "${DO_API_TOKEN_BASE64}" 

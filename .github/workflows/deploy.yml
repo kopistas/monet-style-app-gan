@@ -95,7 +95,8 @@ jobs:
             echo "{" > ../kubernetes/output/terraform-output.json
             terraform output -raw spaces_region 2>/dev/null | xargs -I{} echo "  \"spaces_region\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
             terraform output -raw spaces_bucket_name 2>/dev/null | xargs -I{} echo "  \"spaces_bucket_name\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
-            terraform output -raw dns_configuration 2>/dev/null | xargs -I{} echo "  \"dns_configuration\": { \"value\": \"{}\" }" >> ../kubernetes/output/terraform-output.json
+            terraform output -raw dns_configuration 2>/dev/null | xargs -I{} echo "  \"dns_configuration\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
+            terraform output -raw load_balancer_ip 2>/dev/null | xargs -I{} echo "  \"load_balancer_ip\": { \"value\": \"{}\" }" >> ../kubernetes/output/terraform-output.json
             echo "}" >> ../kubernetes/output/terraform-output.json
           fi
           
@@ -293,6 +294,47 @@ jobs:
           # Apply cert-manager issuer
           envsubst < kubernetes/cert-manager/issuer.yaml | kubectl apply -f -
           
+      - name: Apply Floating IP Assignment Job
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          # Get the reserved IP directly from the Terraform output file
+          echo "Reading floating IP from Terraform output file..."
+          
+          # The Terraform output JSON file has already been created in a previous step
+          if [ -f "kubernetes/output/terraform-output.json" ]; then
+            FLOATING_IP=$(jq -r '.load_balancer_ip.value // ""' kubernetes/output/terraform-output.json)
+            
+            if [ -n "$FLOATING_IP" ]; then
+              echo "Found floating IP in Terraform output: $FLOATING_IP"
+            else
+              echo "ERROR: Floating IP not found in Terraform output file."
+              echo "Content of terraform-output.json:"
+              cat kubernetes/output/terraform-output.json
+              exit 1
+            fi
+          else
+            echo "ERROR: Terraform output file not found at kubernetes/output/terraform-output.json"
+            ls -la kubernetes/output/ || echo "Output directory doesn't exist or is empty"
+            exit 1
+          fi
+          
+          echo "Using floating IP: $FLOATING_IP"
+          
+          # Create base64 encoded API token for the job secret
+          # Fix the base64 encoding to ensure it's properly formatted
+          DO_API_TOKEN_BASE64=$(echo -n "${{ secrets.DO_TOKEN }}" | base64 | tr -d '\n')
+          
+          # Apply the job manifest with environment variables substituted
+          FLOATING_IP=$FLOATING_IP DO_API_TOKEN_BASE64=$DO_API_TOKEN_BASE64 envsubst < kubernetes/do-floating-ip/assign-ip-job.yaml | kubectl apply -f -
+          
+          # Wait for the job to start
+          echo "Waiting for floating IP assignment job to start..."
+          sleep 10
+          
+          # Follow the job logs (non-blocking so the workflow can continue)
+          kubectl logs -f -n kube-system job/assign-floating-ip --follow=false || true
+      
       - name: Apply Kubernetes Manifests - MLflow
         run: |
           # Check if MLflow should be deployed
