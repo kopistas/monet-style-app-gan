@@ -12,20 +12,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the model and app code
-COPY photo2monet_cyclegan_mark4.pt .
-
+# Copy scripts and app code
+COPY scripts/ ./scripts/
 COPY app/ ./app/
 
-# Verify files are copied correctly
-RUN ls -la && ls -la app/
+# Copy model file if it exists
+COPY *.pt ./
 
-# Create uploads directory
-RUN mkdir -p app/uploads
+# Create necessary directories
+RUN mkdir -p app/uploads models
 
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV MODEL_PATH=/app/photo2monet_cyclegan_mark4.pt
+
+# Make scripts executable
+RUN chmod +x scripts/*.py
 
 # Expose the port
 EXPOSE 5080

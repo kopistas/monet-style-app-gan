@@ -6,6 +6,9 @@ import logging
 import time
 import gc
 import traceback
+import json
+import threading
+import urllib.parse
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import torch
@@ -14,6 +17,8 @@ import torchvision.transforms as T
 import requests
 from dotenv import load_dotenv
 import random
+import boto3
+from botocore.exceptions import ClientError
 
 # Set up logging
 logging.basicConfig(
@@ -47,11 +52,19 @@ def handle_exception(e):
     return jsonify({"error": f"Внутренняя ошибка сервера: {str(e)}"}), 500
 
 # Configuration
-ENV_MODEL_PATH = os.getenv('MODEL_PATH', '')
-MODEL_PATH = ENV_MODEL_PATH if ENV_MODEL_PATH else "/app/models/photo2monet_cyclegan_mark4.pt"
+MODEL_PATH = os.getenv('MODEL_PATH', 'photo2monet_cyclegan_mark4.pt')
 UPLOAD_FOLDER = 'app/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 UNSPLASH_API_KEY = os.getenv('UNSPLASH_API_KEY', '')
+S3_BUCKET = os.getenv('S3_BUCKET', '')
+MODEL_CHECK_INTERVAL = 3600  # Check for new models every hour
+
+# Log configured model path and environment
+logger.info(f"Configured MODEL_PATH: {MODEL_PATH}")
+logger.info(f"S3_BUCKET: {S3_BUCKET}")
+logger.info(f"S3_ENDPOINT: {os.getenv('S3_ENDPOINT', 'Not set')}")
+logger.info(f"AWS_ACCESS_KEY_ID: {'Set' if os.getenv('AWS_ACCESS_KEY_ID') else 'Not set'}")
+logger.info(f"AWS_SECRET_ACCESS_KEY: {'Set' if os.getenv('AWS_SECRET_ACCESS_KEY') else 'Not set'}")
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
@@ -60,10 +73,13 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 logger.info(f"Using device: {DEVICE}")
 
-# Model variable initialized as None
+# Model variables
 gen = None
 model_loading = False
 model_load_error = None  # Track any model loading errors
+model_download_progress = {"status": "idle", "progress": 0, "message": ""}
+inference_progress = {"status": "idle", "progress": 0, "message": ""}
+last_model_check_time = 0
 
 # Set up transforms
 prep = T.Compose([
@@ -121,8 +137,8 @@ def check_model_exists():
     return False, None
 
 def load_model():
-    """Load the model on demand with enhanced error handling"""
-    global gen, model_loading, model_load_error
+    """Load the model on demand"""
+    global gen, model_loading, inference_progress
     
     if gen is not None:
         logger.info("Model already loaded")
@@ -133,47 +149,49 @@ def load_model():
         return False
     
     model_loading = True
-    model_load_error = None
+    inference_progress = {"status": "loading", "progress": 0, "message": "Loading model into memory"}
     logger.info(f"Loading model from {MODEL_PATH}")
     
     try:
-        # First check if model exists in any location
-        model_exists, found_path = check_model_exists()
+        # Check for model in several locations
+        model_locations = [
+            MODEL_PATH,                                  # Default path from env var
+            os.path.join(os.getcwd(), MODEL_PATH),       # Relative to current directory
+            os.path.join(os.getcwd(), "models", os.path.basename(MODEL_PATH)),  # In models subdir
+            os.path.join("/app", MODEL_PATH),            # Docker container root
+            os.path.join("/app/models", os.path.basename(MODEL_PATH)),  # Docker container models dir
+            os.path.join("/app", os.path.basename(MODEL_PATH))   # Dockerfile copied model to root
+        ]
         
-        if not model_exists:
-            error_msg = f"Model file not found at {MODEL_PATH} or any alternative locations"
-            logger.error(error_msg)
-            model_load_error = error_msg
+        # Find the first valid model file
+        model_file = None
+        for location in model_locations:
+            if os.path.exists(location):
+                model_file = location
+                logger.info(f"Found model at {location}")
+                break
+                
+        if not model_file:
+            locations_str = "\n - ".join(model_locations)
+            logger.error(f"Model file not found in any of these locations:\n - {locations_str}")
+            logger.info(f"Current working directory: {os.getcwd()}")
+            logger.info(f"Files in current directory: {os.listdir('.')}")
+            if os.path.exists('/app'):
+                logger.info(f"Files in /app: {os.listdir('/app')}")
             model_loading = False
+            inference_progress = {"status": "error", "progress": 0, "message": "Model file not found. Please check your configuration."}
             return False
         
-        # Log model file size for debugging
-        try:
-            model_size = os.path.getsize(found_path) / (1024 * 1024)  # Size in MB
-            logger.info(f"Model file size: {model_size:.2f} MB")
-        except Exception as e:
-            logger.warning(f"Couldn't get model file size: {e}")
-        
         # Load the model
-        logger.info(f"Loading model from {found_path}")
-        gen = torch.jit.load(found_path, map_location=DEVICE).eval()
-        
-        # Log model info
-        try:
-            logger.info(f"Model loaded successfully. Device: {next(gen.parameters()).device}")
-            logger.info(f"Model memory: {torch.cuda.memory_allocated() / 1024**2:.2f} MB (allocated)")
-        except Exception as e:
-            logger.warning(f"Error getting model details: {e}")
-            
+        gen = torch.jit.load(model_file, map_location=DEVICE).eval()
+        logger.info(f"Model loaded successfully from {model_file}")
         model_loading = False
+        inference_progress = {"status": "idle", "progress": 30, "message": "Model loaded successfully"}
         return True
-        
     except Exception as e:
-        tb = traceback.format_exc()
-        error_msg = f"Error loading model: {e}\n{tb}"
-        logger.error(error_msg)
-        model_load_error = error_msg
+        logger.error(f"Error loading model: {e}")
         model_loading = False
+        inference_progress = {"status": "error", "progress": 0, "message": f"Error loading model: {e}"}
         return False
 
 def unload_model():
@@ -234,26 +252,243 @@ def stylize_tiles_cpu(pil_img, tile=256, stride=224):
     blended = canvas / (weight + eps)
     return T.ToPILImage()(blended.clamp(-1, 1).add(1).mul(0.5))
 
+def get_s3_client():
+    """Create and return an S3 client"""
+    s3_endpoint = os.getenv('S3_ENDPOINT', None)
+    aws_access_key = os.getenv('AWS_ACCESS_KEY_ID', None)
+    aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY', None)
+    
+    try:
+        if s3_endpoint and aws_access_key and aws_secret_key:
+            logger.info(f"Creating S3 client with endpoint: {s3_endpoint}")
+            return boto3.client(
+                's3',
+                endpoint_url=s3_endpoint,
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key
+            )
+        elif aws_access_key and aws_secret_key:
+            logger.info("Creating S3 client with AWS credentials")
+            return boto3.client(
+                's3',
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key
+            )
+        else:
+            logger.warning("No S3 credentials provided, using anonymous client")
+            return None
+    except Exception as e:
+        logger.error(f"Error creating S3 client: {e}")
+        return None
 
-# ---------- new process_image ----------------------------------------
+def get_production_model_info():
+    """Get information about the current production model from S3"""
+    try:
+        if not S3_BUCKET:
+            logger.warning("S3_BUCKET environment variable not set, skipping model check")
+            return None
+
+        s3_client = get_s3_client()
+        if not s3_client:
+            logger.warning("Could not create S3 client, skipping model check")
+            return None
+            
+        # Look for a production marker file that contains the current production model name
+        # This could come from MLflow or our direct promotion script
+        production_marker_key = "production_model.json"
+        
+        try:
+            response = s3_client.get_object(Bucket=S3_BUCKET, Key=production_marker_key)
+            production_info = json.loads(response['Body'].read().decode('utf-8'))
+            
+            logger.info(f"Found production model info: {production_info}")
+            return production_info
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                logger.warning(f"No production marker file found in bucket {S3_BUCKET}")
+            else:
+                logger.error(f"Error accessing production marker: {e}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error getting production model info: {e}")
+        return None
+
+def download_model_from_s3(model_key, local_path):
+    """Download model from S3 with progress tracking"""
+    global model_download_progress
+    
+    try:
+        if not S3_BUCKET:
+            error_msg = "S3_BUCKET environment variable not set"
+            logger.error(error_msg)
+            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            return False
+
+        s3_client = get_s3_client()
+        if not s3_client:
+            error_msg = "Could not create S3 client"
+            logger.error(error_msg)
+            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            return False
+            
+        # Get file size for progress calculation
+        try:
+            response = s3_client.head_object(Bucket=S3_BUCKET, Key=model_key)
+            total_size = response.get('ContentLength', 0)
+        except ClientError as e:
+            logger.error(f"Error getting model file size: {e}")
+            total_size = 0
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        
+        # Set up progress tracking
+        downloaded = 0
+        
+        def progress_callback(chunk):
+            nonlocal downloaded
+            downloaded += chunk
+            if total_size > 0:
+                progress = int((downloaded / total_size) * 100)
+                model_download_progress["progress"] = progress
+                model_download_progress["message"] = f"Downloaded {downloaded / (1024*1024):.1f} MB of {total_size / (1024*1024):.1f} MB"
+        
+        # Update progress status
+        model_download_progress = {
+            "status": "downloading", 
+            "progress": 0, 
+            "message": f"Starting download of {model_key}"
+        }
+        
+        # Custom download with progress
+        with open(local_path, 'wb') as f:
+            logger.info(f"Downloading model from s3://{S3_BUCKET}/{model_key} to {local_path}")
+            
+            try:
+                s3_object = s3_client.get_object(Bucket=S3_BUCKET, Key=model_key)
+                
+                # Stream the file in chunks to track progress
+                chunk_size = 1024 * 1024  # 1MB chunks
+                while True:
+                    chunk = s3_object['Body'].read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    progress_callback(len(chunk))
+                
+                model_download_progress = {
+                    "status": "completed", 
+                    "progress": 100, 
+                    "message": "Download complete"
+                }
+                logger.info(f"Model download complete: {local_path}")
+                return True
+                
+            except ClientError as e:
+                error_msg = f"Error downloading model: {e}"
+                logger.error(error_msg)
+                model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+                return False
+                
+    except Exception as e:
+        error_msg = f"Error in download process: {e}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        return False
+
+def check_and_update_model():
+    """Check if a new production model is available and download it if needed"""
+    global MODEL_PATH, last_model_check_time, model_download_progress
+    
+    # Don't check too frequently
+    current_time = time.time()
+    if current_time - last_model_check_time < MODEL_CHECK_INTERVAL:
+        return False
+        
+    last_model_check_time = current_time
+    
+    # Skip check if S3 not configured
+    if not S3_BUCKET:
+        logger.info("S3 not configured, skipping model check")
+        return False
+    
+    # Get current production model info
+    production_info = get_production_model_info()
+    
+    if not production_info or 'model_key' not in production_info:
+        logger.warning("No production model information available")
+        return False
+        
+    production_model_key = production_info['model_key']
+    model_version = production_info.get('version', 'unknown')
+    
+    # Create local path for downloaded model
+    models_dir = os.path.join(os.getcwd(), "models")
+    os.makedirs(models_dir, exist_ok=True)
+    
+    # Extract model filename from S3 key
+    model_filename = os.path.basename(production_model_key)
+    local_model_path = os.path.join(models_dir, model_filename)
+    
+    # Check if we already have this model version
+    current_model_name = os.path.basename(MODEL_PATH)
+    
+    if current_model_name == model_filename and os.path.exists(MODEL_PATH):
+        logger.info(f"Already using the latest production model: {model_filename}")
+        return False
+        
+    logger.info(f"New production model available: {production_model_key} (version: {model_version})")
+    logger.info(f"Current model: {MODEL_PATH}, new model will be: {local_model_path}")
+    
+    # Download the new model
+    model_download_progress = {
+        "status": "preparing", 
+        "progress": 0, 
+        "message": f"Preparing to download new model (version: {model_version})"
+    }
+    
+    # Download the model (this will update the progress)
+    if download_model_from_s3(production_model_key, local_model_path):
+        logger.info(f"Downloaded new model to {local_model_path}")
+        # Update model path to use the new model
+        MODEL_PATH = local_model_path
+        
+        # Unload the current model if it's loaded
+        unload_model()
+        
+        return True
+    else:
+        logger.error("Failed to download new model")
+        return False
+
 def process_image(image: Image.Image):
     """
     • ≤256 px  → fast path (single crop).
     • >256 px → CPU tiling with 256-px tiles.
     Returns (result-dict, None) or (None, error-msg).
     """
-    global gen, model_load_error
+    global gen, inference_progress
+    
+    # First, check if there's a new model to download (but don't block)
+    if not model_loading:
+        thread = threading.Thread(target=check_and_update_model)
+        thread.daemon = True
+        thread.start()
+    
+    # Set initial progress
+    inference_progress = {"status": "loading", "progress": 0, "message": "Loading model"}
 
+    # Load model if needed
     if gen is None and not load_model():
-        error_message = "Ошибка загрузки модели. "
-        if model_load_error:
-            error_message += f"Подробности: {model_load_error}"
-        else:
-            error_message += "Пожалуйста, повторите запрос через несколько секунд."
+        error_message = "Идет загрузка модели... Пожалуйста, повторите запрос через несколько секунд."
+        inference_progress = {"status": "error", "progress": 0, "message": error_message}
         return None, error_message
 
     try:
         t0 = time.time()
+        inference_progress = {"status": "processing", "progress": 30, "message": "Preparing image"}
 
         # Check image dimensions to prevent memory issues
         w, h = image.size
@@ -263,15 +498,21 @@ def process_image(image: Image.Image):
             ratio = max_dim / max(w, h)
             new_w, new_h = int(w * ratio), int(h * ratio)
             logger.info(f"Resizing large image from {w}x{h} to {new_w}x{new_h}")
+            inference_progress = {"status": "processing", "progress": 40, "message": "Resizing image"}
             image = image.resize((new_w, new_h), Image.LANCZOS)
 
+        inference_progress = {"status": "processing", "progress": 50, "message": "Applying style transfer"}
+        
         if max(image.size) <= 256:                       # small: old path
             tin = prep(image).unsqueeze(0)               # stay on CPU
             with torch.no_grad():
                 tout = gen(tin)[0]
+            inference_progress = {"status": "processing", "progress": 80, "message": "Finalizing result"}
             out_img = T.ToPILImage()(denorm(tout))
         else:                                            # large: tile path
+            inference_progress = {"status": "processing", "progress": 60, "message": "Processing image tiles"}
             out_img = stylize_tiles_cpu(image, tile=256, stride=224)
+            inference_progress = {"status": "processing", "progress": 80, "message": "Finalizing result"}
 
         proc_time = time.time() - t0
 
@@ -279,11 +520,11 @@ def process_image(image: Image.Image):
         buf_in, buf_out = io.BytesIO(), io.BytesIO()
         image.save(buf_in, format="JPEG")
         out_img.save(buf_out, format="JPEG")
+        
+        # Unload model to free memory
+        unload_model()
 
-        # Clear RAM after processing
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        inference_progress = {"status": "completed", "progress": 100, "message": "Processing complete"}
 
         return {
             "original":  base64.b64encode(buf_in.getvalue()).decode(),
@@ -292,15 +533,13 @@ def process_image(image: Image.Image):
         }, None
 
     except Exception as e:
-        tb = traceback.format_exc()
-        error_msg = f"Ошибка при обработке изображения: {e}\n{tb}"
         logger.exception("Error processing image")
+        error_msg = f"Ошибка при обработке изображения: {e}"
+        inference_progress = {"status": "error", "progress": 0, "message": error_msg}
         
-        # Clear RAM after error
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
+        # Unload model to free memory after error
+        unload_model()
+        
         return None, error_msg
      
 @app.route('/')
@@ -308,10 +547,20 @@ def index():
     logger.info("Index page requested")
     return render_template('index.html')
 
+@app.route('/api/progress', methods=['GET'])
+def get_progress():
+    """Get the current progress of model download and inference"""
+    global model_download_progress, inference_progress
+    
+    return jsonify({
+        "model_download": model_download_progress,
+        "inference": inference_progress
+    })
+
 @app.route('/api/model-status', methods=['GET'])
 def model_status():
     """Check if the model is loaded or currently loading"""
-    global gen, model_loading, model_load_error
+    global gen, model_loading, model_download_progress
     
     if model_loading:
         status = "loading"
@@ -321,54 +570,37 @@ def model_status():
         status = "unloaded"
     
     # Check if model exists
-    model_exists, found_path = check_model_exists()
+    model_exists = os.path.exists(MODEL_PATH)
     
-    # Check for potential memory issues
-    memory_info = {}
-    if torch.cuda.is_available():
-        memory_info["cuda_allocated"] = f"{torch.cuda.memory_allocated() / 1024**2:.2f} MB"
-        memory_info["cuda_reserved"] = f"{torch.cuda.memory_reserved() / 1024**2:.2f} MB"
-        memory_info["cuda_max_memory"] = f"{torch.cuda.max_memory_allocated() / 1024**2:.2f} MB"
-    
-    free_mem = 0
-    try:
-        import psutil
-        free_mem = psutil.virtual_memory().available / (1024**3)  # GB
-    except ImportError:
-        free_mem = "psutil not installed"
-        
     return jsonify({
         "status": status,
         "device": DEVICE,
-        "error": model_load_error,
         "model_path": MODEL_PATH,
         "model_exists": model_exists,
-        "found_at": found_path if model_exists else None,
-        "memory": memory_info,
-        "system_free_memory_gb": free_mem
+        "download_progress": model_download_progress
     })
 
 @app.route('/api/transform', methods=['POST'])
 def transform_image():
     logger.info("Transform endpoint called")
+    # Check if image was uploaded
+    if 'file' not in request.files:
+        logger.warning("No file part in request")
+        return jsonify({'error': 'Не указан файл'}), 400
+    
+    file = request.files['file']
+    
+    # Check if filename is empty
+    if file.filename == '':
+        logger.warning("No selected file")
+        return jsonify({'error': 'Файл не выбран'}), 400
+    
+    # Check if file is allowed
+    if not allowed_file(file.filename):
+        logger.warning(f"File type not allowed: {file.filename}")
+        return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
+    
     try:
-        # Check if image was uploaded
-        if 'file' not in request.files:
-            logger.warning("No file part in request")
-            return jsonify({'error': 'Не указан файл'}), 400
-        
-        file = request.files['file']
-        
-        # Check if filename is empty
-        if file.filename == '':
-            logger.warning("No selected file")
-            return jsonify({'error': 'Файл не выбран'}), 400
-        
-        # Check if file is allowed
-        if not allowed_file(file.filename):
-            logger.warning(f"File type not allowed: {file.filename}")
-            return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
-        
         # Open and process the image
         img = Image.open(file.stream).convert("RGB")
         logger.info(f"Processing image: {file.filename}")
@@ -383,7 +615,6 @@ def transform_image():
     
     except Exception as e:
         logger.error(f"Error transforming image: {e}")
-        logger.error(traceback.format_exc())
         return jsonify({'error': f'Ошибка при обработке изображения: {str(e)}'}), 500
 
 @app.route('/api/transform-url', methods=['POST'])
@@ -416,11 +647,9 @@ def transform_url():
     
     except requests.exceptions.RequestException as e:
         logger.error(f"Error downloading image from URL: {e}")
-        logger.error(traceback.format_exc())
         return jsonify({'error': f'Ошибка при загрузке изображения по URL: {str(e)}'}), 500
     except Exception as e:
         logger.error(f"Error transforming image from URL: {e}")
-        logger.error(traceback.format_exc())
         return jsonify({'error': f'Ошибка при обработке изображения по URL: {str(e)}'}), 500
 
 @app.route('/api/unsplash-photos', methods=['GET'])
@@ -467,25 +696,32 @@ def get_unsplash_photos():
 def health_check():
     """Simple endpoint to check if server is running"""
     logger.info("Health check endpoint called")
-    global gen, model_loading, model_load_error
+    global gen, model_loading
     
     status = "loading" if model_loading else ("loaded" if gen is not None else "unloaded")
-    
-    # Check if model exists
-    model_exists, _ = check_model_exists()
+    model_exists = os.path.exists(MODEL_PATH)
     
     return jsonify({
         "status": "ok", 
         "model_status": status,
-        "model_exists": model_exists,
         "model_path": MODEL_PATH,
-        "model_error": model_load_error, 
+        "model_exists": model_exists,
         "message": "Сервер работает"
     })
+
+# Print all environment variables for debugging
+def log_environment_variables():
+    """Log all relevant environment variables for debugging"""
+    logger.info("=== Environment Variables ===")
+    for var in ['MODEL_PATH', 'S3_BUCKET', 'S3_ENDPOINT', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'UNSPLASH_API_KEY']:
+        logger.info(f"{var}: {'Set' if os.getenv(var) else 'Not set'}")
+    logger.info("============================")
 
 if __name__ == '__main__':
     print("Запуск сервера трансформации изображений в стиле Моне...")
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs("models", exist_ok=True)  # Ensure models directory exists
     print(f"Сервер доступен на порту 5080. Откройте http://localhost:5080 в браузере")
     logger.info(f"Сервер запускается на порту 5080")
+    log_environment_variables()
     app.run(host='0.0.0.0', port=5080)

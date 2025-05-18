@@ -61,6 +61,9 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "100m"
+        volumeMounts:
+        - name: models-storage
+          mountPath: /app/models
         livenessProbe:
           httpGet:
             path: /health
@@ -77,6 +80,10 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 10
           failureThreshold: 3
+      volumes:
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-storage
 ---
 apiVersion: v1
 kind: Service

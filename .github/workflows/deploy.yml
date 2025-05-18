@@ -263,6 +263,8 @@ jobs:
           echo "MLFLOW_DOMAIN=${{ secrets.MLFLOW_DOMAIN }}" >> $GITHUB_ENV
           echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
+          echo "DO_SPACES_ACCESS_KEY_BASE64=$(echo -n '${{ secrets.DO_SPACES_ACCESS_KEY }}' | base64)" >> $GITHUB_ENV
+          echo "DO_SPACES_SECRET_KEY_BASE64=$(echo -n '${{ secrets.DO_SPACES_SECRET_KEY }}' | base64)" >> $GITHUB_ENV
           
           # Set DNS configuration 
           if [ -z "$DNS_CONFIG" ]; then
@@ -327,6 +329,15 @@ jobs:
         run: |
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
           
+          # Apply namespace first
+          envsubst < kubernetes/web-app/namespace.yaml | kubectl apply -f -
+          
+          # Apply storage resources
+          envsubst < kubernetes/web-app/storage.yaml | kubectl apply -f -
+          
+          # Apply secrets and configmaps
+          envsubst < kubernetes/web-app/spaces-secret.yaml | kubectl apply -f -
+          
           # Apply Web App manifests
           envsubst < kubernetes/web-app/deployment.yaml | kubectl apply -f -
           
@@ -345,14 +356,17 @@ jobs:
           S3_ENDPOINT: "https://${{ secrets.DO_SPACES_REGION }}.digitaloceanspaces.com"
           BUCKET_NAME: ${{ secrets.DO_SPACES_NAME }}
         run: |
-          pip install boto3
+          pip install boto3 mlflow
           
           echo "Using S3 endpoint: $S3_ENDPOINT"
           echo "Using bucket name: $BUCKET_NAME"
           
-          # Use the dedicated upload script from the repository
-          python scripts/upload_model_to_s3.py
-          
+          # Use the model promotion script to upload and mark as production
+          python scripts/promote_model.py photo2monet_cyclegan_mark4.pt \
+            --bucket $BUCKET_NAME \
+            --version "$(date +%Y%m%d%H%M%S)" \
+            --model-name "monet-style-transfer"
+
       - name: Wait and Verify Deployment
         timeout-minutes: 15
         run: |
