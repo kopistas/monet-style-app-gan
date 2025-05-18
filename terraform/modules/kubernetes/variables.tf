@@ -38,6 +38,6 @@ variable "unsplash_api_key" {
 
 variable "deploy_mlflow" {
   description = "Whether to deploy MLflow"
-  default = false
+  default = true
   type    = bool
 } 
