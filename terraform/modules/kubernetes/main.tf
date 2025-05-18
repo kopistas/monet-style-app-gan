@@ -60,6 +60,22 @@ resource "helm_release" "nginx_ingress" {
     value = "LoadBalancer"
   }
   
+  # Enable proper SSL/TLS termination
+  set {
+    name  = "controller.config.ssl-protocols"
+    value = "TLSv1.2 TLSv1.3"
+  }
+  
+  set {
+    name  = "controller.config.ssl-ciphers"
+    value = "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+  }
+  
+  set {
+    name  = "controller.config.ssl-prefer-server-ciphers"
+    value = "off"
+  }
+  
   # Enable proxy protocol for proper client IP forwarding
   set {
     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-enable-proxy-protocol"

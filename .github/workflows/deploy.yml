@@ -451,7 +451,62 @@ jobs:
           
           # Wait for initial pod creation but don't fail pipeline if it's not ready yet
           echo "Waiting for initial web app pod creation..."
-          kubectl rollout status deployment/monet-web-app -n monet-app --timeout=30s || true
+          kubectl rollout status deployment/monet-web-app -n monet-app --timeout=60s || true
+          
+      - name: Verify Certificate and Debug Services
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          # Wait for the certificate to be issued
+          echo "Checking certificate status..."
+          for i in {1..10}; do
+            echo "Attempt $i to check certificate status..."
+            kubectl get certificate -n monet-app monet-web-app-tls -o wide || true
+            
+            CERT_STATUS=$(kubectl get certificate -n monet-app monet-web-app-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+            if [[ "$CERT_STATUS" == "True" ]]; then
+              echo "Certificate is ready!"
+              break
+            fi
+            
+            # Check cert-manager logs for issues
+            echo "Checking cert-manager controller logs for issues..."
+            kubectl logs -n cert-manager -l app=cert-manager -c cert-manager --tail=20 || true
+            
+            echo "Waiting for certificate to be issued (attempt $i/10)..."
+            sleep 30
+          done
+          
+          # Check Certificate and Ingress status
+          echo "Certificate details:"
+          kubectl get certificate -n monet-app monet-web-app-tls -o yaml || true
+          
+          echo "Ingress details:"
+          kubectl get ingress -n monet-app -o wide || true
+          
+          # Debug cert-manager issues
+          echo "Checking cert-manager CRDs:"
+          kubectl get clusterissuers.cert-manager.io || true
+          
+          # Check web app pod status
+          echo "Web app pod status:"
+          kubectl get pods -n monet-app || true
+          
+          # Look for any issues with the pod
+          MISBEHAVING_POD=$(kubectl get pods -n monet-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [[ -n "$MISBEHAVING_POD" ]]; then
+            echo "Checking logs for pod $MISBEHAVING_POD:"
+            kubectl logs -n monet-app $MISBEHAVING_POD --tail=50 || true
+            
+            echo "Checking pod details for $MISBEHAVING_POD:"
+            kubectl describe pod -n monet-app $MISBEHAVING_POD || true
+          fi
+          
+          echo "Current services:"
+          kubectl get services --all-namespaces || true
+          
+          echo "Current ingresses:"
+          kubectl get ingresses --all-namespaces || true
 
       - name: Upload Model to S3
         env:
