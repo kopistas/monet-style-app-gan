@@ -143,8 +143,11 @@ jobs:
 
       - name: Export Environment Variables
         run: |
-          echo "DO_SPACES_REGION=$(jq -r '.spaces_region.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
-          echo "DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          # Try to read from Terraform output
+          if [ -f kubernetes/output/terraform-output.json ]; then
+            echo "DO_SPACES_REGION=$(jq -r '.spaces_region.value // empty' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+            echo "DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value // empty' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          fi
           echo "BACKEND_STORE_URI=sqlite:////mlflow-db/mlflow.db" >> $GITHUB_ENV
           echo "DOCKER_REGISTRY=${DOCKER_REGISTRY}" >> $GITHUB_ENV
           echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
@@ -152,7 +155,11 @@ jobs:
           echo "MLFLOW_DOMAIN=${{ secrets.MLFLOW_DOMAIN }}" >> $GITHUB_ENV
           echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
-          echo "DNS_CONFIG=$(jq -r '.dns_configuration.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          if [ -f kubernetes/output/terraform-output.json ]; then
+            echo "DNS_CONFIG=$(jq -r '.dns_configuration.value // "DNS configuration not found in terraform output"' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          else
+            echo "DNS_CONFIG=Terraform output file not found" >> $GITHUB_ENV
+          fi
 
       - name: Display Environment Variables
         run: |
@@ -188,9 +195,9 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
-          AWS_REGION: ${{ env.DO_SPACES_REGION }}
-          S3_ENDPOINT: "https://${{ env.DO_SPACES_REGION }}.digitaloceanspaces.com"
-          BUCKET_NAME: ${{ env.DO_SPACES_NAME }}
+          AWS_REGION: ${{ secrets.DO_SPACES_REGION }}
+          S3_ENDPOINT: "https://${{ secrets.DO_SPACES_REGION }}.digitaloceanspaces.com"
+          BUCKET_NAME: ${{ secrets.DO_SPACES_NAME }}
         run: |
           pip install boto3
           
