@@ -1,223 +1,162 @@
 terraform {
   required_providers {
     digitalocean = {
-      source  = "digitalocean/digitalocean"
-      version = "~> 2.34.0"
+      source = "digitalocean/digitalocean"
+      version = "~> 2.0"
     }
     kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.27.0"
+      source = "hashicorp/kubernetes"
+      version = "~> 2.0"
     }
     helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.12.1"
-    }
-    time = {
-      source  = "hashicorp/time"
-      version = "~> 0.9.1"
+      source = "hashicorp/helm"
+      version = "~> 2.0"
     }
   }
-  required_version = ">= 1.0.0"
-
   backend "s3" {
-    skip_credentials_validation = true
-    skip_metadata_api_check     = true
-    endpoint                    = "https://ams3.digitaloceanspaces.com"
-    region                      = "us-east-1" # Required but unused for DO Spaces
+    endpoint                    = "ams3.digitaloceanspaces.com"
+    region                      = "us-east-1"
     bucket                      = "terraform-storage-moria"
     key                         = "terraform-monet.tfstate"
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
   }
 }
 
-provider "digitalocean" {
-  token             = var.do_token
-  spaces_access_id  = var.do_spaces_access_key
-  spaces_secret_key = var.do_spaces_secret_key
+# Infrastructure Module - Core Resources
+module "infrastructure" {
+  source = "./modules/infrastructure"
+  
+  do_token = var.do_token
+  do_region = var.do_region
+  do_spaces_region = var.do_spaces_region
+  do_spaces_name = var.do_spaces_name
+  do_spaces_access_key = var.do_spaces_access_key
+  do_spaces_secret_key = var.do_spaces_secret_key
+  cluster_node_size = var.cluster_node_size
+  cluster_node_count = var.cluster_node_count
+  app_domain = var.app_domain
+  mlflow_domain = var.mlflow_domain
+  use_do_dns = var.use_do_dns
 }
 
-# Create a new Kubernetes cluster
-resource "digitalocean_kubernetes_cluster" "monet_cluster" {
-  name    = "monet-cluster"
-  region  = var.do_region
-  version = var.kubernetes_version
-
-  node_pool {
-    name       = "monet-nodes"
-    size       = var.node_size
-    node_count = var.node_count
-  }
-}
-
-# Configure kubernetes provider with cluster details
+# Configure Kubernetes providers with the cluster details
 provider "kubernetes" {
-  host                   = digitalocean_kubernetes_cluster.monet_cluster.endpoint
-  token                  = digitalocean_kubernetes_cluster.monet_cluster.kube_config[0].token
-  cluster_ca_certificate = base64decode(digitalocean_kubernetes_cluster.monet_cluster.kube_config[0].cluster_ca_certificate)
+  host                   = module.infrastructure.kubernetes_endpoint
+  token                  = module.infrastructure.kubernetes_token
+  cluster_ca_certificate = base64decode(module.infrastructure.kubernetes_ca_certificate)
 }
 
 provider "helm" {
   kubernetes {
-    host                   = digitalocean_kubernetes_cluster.monet_cluster.endpoint
-    token                  = digitalocean_kubernetes_cluster.monet_cluster.kube_config[0].token
-    cluster_ca_certificate = base64decode(digitalocean_kubernetes_cluster.monet_cluster.kube_config[0].cluster_ca_certificate)
+    host                   = module.infrastructure.kubernetes_endpoint
+    token                  = module.infrastructure.kubernetes_token
+    cluster_ca_certificate = base64decode(module.infrastructure.kubernetes_ca_certificate)
   }
 }
 
-# Create a Spaces bucket for model storage
-resource "digitalocean_spaces_bucket" "model_storage" {
-  name   = var.do_spaces_name
-  region = var.do_spaces_region
-  acl    = "private"
-}
-
-# Create namespaces
-resource "kubernetes_namespace" "mlflow" {
-  metadata {
-    name = "mlflow"
-  }
-}
-
-resource "kubernetes_namespace" "monet_app" {
-  metadata {
-    name = "monet-app"
-  }
-}
-
-# Create secrets for S3 access using pre-existing DO Spaces keys
-resource "kubernetes_secret" "spaces_credentials" {
-  metadata {
-    name      = "spaces-credentials"
-    namespace = "mlflow"
-  }
-
-  data = {
-    access_key = var.do_spaces_access_key
-    secret_key = var.do_spaces_secret_key
-  }
-}
-
-resource "kubernetes_secret" "spaces_credentials_app" {
-  metadata {
-    name      = "spaces-credentials"
-    namespace = "monet-app"
-  }
-
-  data = {
-    access_key = var.do_spaces_access_key
-    secret_key = var.do_spaces_secret_key
-  }
-}
-
-# Install NGINX Ingress Controller
-resource "helm_release" "nginx_ingress" {
-  name       = "nginx-ingress"
-  repository = "https://kubernetes.github.io/ingress-nginx"
-  chart      = "ingress-nginx"
-  namespace  = "ingress-nginx"
-  create_namespace = true
-
-  set {
-    name  = "controller.service.type"
-    value = "LoadBalancer"
-  }
-}
-
-# Install cert-manager for SSL certificates
-resource "helm_release" "cert_manager" {
-  name       = "cert-manager"
-  repository = "https://charts.jetstack.io"
-  chart      = "cert-manager"
-  namespace  = "cert-manager"
-  create_namespace = true
-
-  set {
-    name  = "installCRDs"
-    value = "true"
-  }
-}
-
-# Export kubeconfig for GitHub Actions
-resource "local_file" "kubeconfig" {
-  content  = digitalocean_kubernetes_cluster.monet_cluster.kube_config[0].raw_config
-  filename = "${path.module}/kubeconfig.yaml"
-}
-
-# Automated DNS setup
-# Create DNS domain if using DigitalOcean DNS
-resource "digitalocean_domain" "app_domain" {
-  count = var.use_do_dns ? 1 : 0
-  name  = var.app_domain
-}
-
-resource "digitalocean_domain" "mlflow_domain" {
-  count = var.use_do_dns ? 1 : 0
-  name  = var.mlflow_domain
-}
-
-# Wait for the load balancer to be assigned an IP
-resource "time_sleep" "wait_for_lb" {
-  depends_on = [helm_release.nginx_ingress]
-  create_duration = "60s"
-}
-
-# Create DNS records that point to the load balancer
-resource "digitalocean_record" "app_record" {
-  count = var.use_do_dns ? 1 : 0
-  depends_on = [time_sleep.wait_for_lb]
+# Kubernetes Module - Only runs after cluster is available
+module "kubernetes_resources" {
+  source = "./modules/kubernetes"
   
-  domain = digitalocean_domain.app_domain[0].name
-  type   = "A"
-  name   = "@"
-  value  = data.kubernetes_service.ingress_nginx.status.0.load_balancer.0.ingress.0.ip
-  ttl    = 300
-}
-
-resource "digitalocean_record" "mlflow_record" {
-  count = var.use_do_dns ? 1 : 0
-  depends_on = [time_sleep.wait_for_lb]
+  # The providers are now configured at the root level
+  # so we don't need to pass kubeconfig but we use depends_on to ensure proper order
+  depends_on = [module.infrastructure]
   
-  domain = digitalocean_domain.mlflow_domain[0].name
-  type   = "A"
-  name   = "@"
-  value  = data.kubernetes_service.ingress_nginx.status.0.load_balancer.0.ingress.0.ip
-  ttl    = 300
+  do_spaces_region = var.do_spaces_region
+  do_spaces_name = var.do_spaces_name
+  do_spaces_access_key = var.do_spaces_access_key
+  do_spaces_secret_key = var.do_spaces_secret_key
+  app_domain = var.app_domain
+  mlflow_domain = var.mlflow_domain
+  email_for_ssl = var.email_for_ssl
+  unsplash_api_key = var.unsplash_api_key
 }
 
-# Outputs to be used by other configurations
+# Variables
+variable "do_token" {
+  description = "DigitalOcean API token"
+  sensitive = true
+}
+
+variable "do_region" {
+  description = "DigitalOcean region"
+  default = "ams3"
+}
+
+variable "do_spaces_region" {
+  description = "DigitalOcean Spaces region"
+  default = "ams3"
+}
+
+variable "do_spaces_name" {
+  description = "DigitalOcean Spaces bucket name"
+  default = "monet-models"
+}
+
+variable "do_spaces_access_key" {
+  description = "DigitalOcean Spaces access key"
+  sensitive = true
+}
+
+variable "do_spaces_secret_key" {
+  description = "DigitalOcean Spaces secret key"
+  sensitive = true
+}
+
+variable "cluster_node_size" {
+  description = "Size of the Kubernetes nodes"
+  default = "s-2vcpu-4gb"
+}
+
+variable "cluster_node_count" {
+  description = "Number of nodes in the Kubernetes cluster"
+  default = 2
+}
+
+variable "app_domain" {
+  description = "Domain name for the web application"
+  default = ""
+}
+
+variable "mlflow_domain" {
+  description = "Domain name for MLflow"
+  default = ""
+}
+
+variable "email_for_ssl" {
+  description = "Email address for SSL certificates"
+  default = "admin@example.com"
+}
+
+variable "unsplash_api_key" {
+  description = "Unsplash API key for image search"
+  default = ""
+  sensitive = true
+}
+
+variable "use_do_dns" {
+  description = "Whether to use DigitalOcean DNS"
+  default = false
+}
+
+# Outputs
 output "kubernetes_cluster_id" {
-  value = digitalocean_kubernetes_cluster.monet_cluster.id
+  value = module.infrastructure.kubernetes_cluster_id
 }
 
 output "kubernetes_endpoint" {
-  value = digitalocean_kubernetes_cluster.monet_cluster.endpoint
-}
-
-output "spaces_endpoint" {
-  value = "https://${var.do_spaces_name}.${var.do_spaces_region}.digitaloceanspaces.com"
+  value = module.infrastructure.kubernetes_endpoint
 }
 
 output "spaces_bucket_name" {
-  value = digitalocean_spaces_bucket.model_storage.name
+  value = module.infrastructure.spaces_bucket_name
 }
 
 output "spaces_region" {
-  value = digitalocean_spaces_bucket.model_storage.region
-}
-
-output "load_balancer_ip" {
-  value = data.kubernetes_service.ingress_nginx.status.0.load_balancer.0.ingress.0.ip
+  value = var.do_spaces_region
 }
 
 output "dns_configuration" {
-  value = var.use_do_dns ? "DNS has been automatically configured." : "Please configure your DNS manually using the load balancer IP."
-}
-
-# Data source to get the LoadBalancer IP after it's created
-data "kubernetes_service" "ingress_nginx" {
-  depends_on = [helm_release.nginx_ingress]
-  
-  metadata {
-    name      = "nginx-ingress-ingress-nginx-controller"
-    namespace = "ingress-nginx"
-  }
+  value = module.infrastructure.dns_configuration
 } 

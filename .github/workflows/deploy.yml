@@ -50,6 +50,8 @@ jobs:
           TF_VAR_unsplash_api_key: ${{ secrets.UNSPLASH_API_KEY || '' }}
           TF_VAR_email_for_ssl: ${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}
           TF_VAR_use_do_dns: ${{ secrets.USE_DO_DNS || 'false' }}
+          TF_VAR_cluster_node_size: ${{ secrets.CLUSTER_NODE_SIZE }}
+          TF_VAR_cluster_node_count: ${{ secrets.CLUSTER_NODE_COUNT }}
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply
@@ -63,6 +65,8 @@ jobs:
           TF_VAR_do_spaces_region: ${{ secrets.DO_SPACES_REGION || 'nyc3' }}
           TF_VAR_app_domain: ${{ secrets.APP_DOMAIN }}
           TF_VAR_mlflow_domain: ${{ secrets.MLFLOW_DOMAIN }}
+          TF_VAR_cluster_node_size: ${{ secrets.CLUSTER_NODE_SIZE }}
+          TF_VAR_cluster_node_count: ${{ secrets.CLUSTER_NODE_COUNT }}
         run: terraform apply -auto-approve tfplan
 
       - name: Save Terraform Output
