@@ -93,8 +93,12 @@ def check_pods(namespace):
                         events = json.loads(events_json)
                         if events.get('items'):
                             print("    Recent events for this pod:")
-                            # Sort events by timestamp
-                            events['items'].sort(key=lambda x: x.get('lastTimestamp', ''), reverse=True)
+                            # Sort events by timestamp - handle None values by using an empty string as fallback
+                            def safe_timestamp_key(x):
+                                timestamp = x.get('lastTimestamp')
+                                return timestamp if timestamp is not None else ""
+                            
+                            events['items'].sort(key=safe_timestamp_key, reverse=True)
                             for event in events['items'][:5]:  # Only show the 5 most recent events
                                 reason = event.get('reason', 'Unknown')
                                 message = event.get('message', 'No message')
