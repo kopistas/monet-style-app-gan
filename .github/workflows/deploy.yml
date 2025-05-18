@@ -204,32 +204,5 @@ jobs:
           echo "Using S3 endpoint: $S3_ENDPOINT"
           echo "Using bucket name: $BUCKET_NAME"
           
-          # Upload the initial model file to S3
-          python - <<'ENDPYTHON'
-          import boto3
-          from botocore.client import Config
-          import os
-          
-          # Configure S3 client
-          endpoint_url = os.environ.get('S3_ENDPOINT')
-          bucket = os.environ.get('BUCKET_NAME')
-          
-          print(f"Configuring S3 client with endpoint: {endpoint_url}")
-          print(f"Using bucket: {bucket}")
-          
-          s3_client = boto3.client(
-              's3',
-              endpoint_url=endpoint_url,
-              aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
-              aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
-              config=Config(signature_version='s3v4'),
-              region_name=os.environ.get('AWS_REGION')
-          )
-          
-          # Upload the model
-          model_path = 'photo2monet_cyclegan_mark4.pt'
-          
-          print(f'Uploading model {model_path} to bucket {bucket}')
-          s3_client.upload_file(model_path, bucket, model_path)
-          print(f'Model uploaded to {bucket}/{model_path}')
-          ENDPYTHON 
+          # Use the dedicated upload script from the repository
+          python scripts/upload_model_to_s3.py 
