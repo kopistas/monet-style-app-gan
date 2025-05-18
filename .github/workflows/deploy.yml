@@ -148,11 +148,17 @@ jobs:
           echo "BACKEND_STORE_URI=sqlite:////mlflow-db/mlflow.db" >> $GITHUB_ENV
           echo "DOCKER_REGISTRY=${DOCKER_REGISTRY}" >> $GITHUB_ENV
           echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
-          echo "APP_DOMAIN=${{ secrets.APP_DOMAIN || 'monet-app.example.com' }}" >> $GITHUB_ENV
-          echo "MLFLOW_DOMAIN=${{ secrets.MLFLOW_DOMAIN || 'mlflow.example.com' }}" >> $GITHUB_ENV
+          echo "APP_DOMAIN=${{ secrets.APP_DOMAIN }}" >> $GITHUB_ENV
+          echo "MLFLOW_DOMAIN=${{ secrets.MLFLOW_DOMAIN }}" >> $GITHUB_ENV
           echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
           echo "DNS_CONFIG=$(jq -r '.dns_configuration.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+
+      - name: Display Environment Variables
+        run: |
+          echo "DO_SPACES_REGION: $DO_SPACES_REGION"
+          echo "DO_SPACES_NAME: $DO_SPACES_NAME"
+          echo "S3 ENDPOINT would be: https://$DO_SPACES_REGION.digitaloceanspaces.com"
 
       - name: Display DNS Configuration
         run: 'echo "DNS Configuration: ${{ env.DNS_CONFIG }}"'
@@ -183,9 +189,13 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
           AWS_REGION: ${{ env.DO_SPACES_REGION }}
-          S3_ENDPOINT: https://${{ env.DO_SPACES_REGION }}.digitaloceanspaces.com
+          S3_ENDPOINT: "https://${{ env.DO_SPACES_REGION }}.digitaloceanspaces.com"
+          BUCKET_NAME: ${{ env.DO_SPACES_NAME }}
         run: |
           pip install boto3
+          
+          echo "Using S3 endpoint: $S3_ENDPOINT"
+          echo "Using bucket name: $BUCKET_NAME"
           
           # Upload the initial model file to S3
           python - << EOF
@@ -194,9 +204,15 @@ jobs:
           import os
           
           # Configure S3 client
+          endpoint_url = os.environ.get('S3_ENDPOINT')
+          bucket = os.environ.get('BUCKET_NAME')
+          
+          print(f"Configuring S3 client with endpoint: {endpoint_url}")
+          print(f"Using bucket: {bucket}")
+          
           s3_client = boto3.client(
               's3',
-              endpoint_url=os.environ.get('S3_ENDPOINT'),
+              endpoint_url=endpoint_url,
               aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
               aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
               config=Config(signature_version='s3v4'),
@@ -204,10 +220,9 @@ jobs:
           )
           
           # Upload the model
-          bucket = os.environ.get('DO_SPACES_NAME')
           model_path = 'photo2monet_cyclegan_mark4.pt'
           
-          print(f'Uploading model to bucket {bucket}')
+          print(f'Uploading model {model_path} to bucket {bucket}')
           s3_client.upload_file(model_path, bucket, model_path)
           print(f'Model uploaded to {bucket}/{model_path}')
           EOF 
