@@ -12,6 +12,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.12.1"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9.1"
+    }
   }
   required_version = ">= 1.0.0"
 
@@ -26,7 +30,9 @@ terraform {
 }
 
 provider "digitalocean" {
-  token = var.do_token
+  token             = var.do_token
+  spaces_access_id  = var.do_spaces_access_key
+  spaces_secret_key = var.do_spaces_secret_key
 }
 
 # Create a new Kubernetes cluster

@@ -7,13 +7,13 @@ variable "do_token" {
 variable "do_region" {
   description = "DigitalOcean region"
   type        = string
-  default     = "fra1"
+  default     = "nyc1"
 }
 
 variable "do_spaces_region" {
   description = "DigitalOcean Spaces region"
   type        = string
-  default     = "fra1"
+  default     = "nyc3"
 }
 
 variable "do_spaces_name" {
