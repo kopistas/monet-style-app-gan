@@ -60,8 +60,33 @@ resource "helm_release" "nginx_ingress" {
     value = "LoadBalancer"
   }
   
-  # Add timeout to ensure it completes
-  timeout = 600
+  # Enable proxy protocol for proper client IP forwarding
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-enable-proxy-protocol"
+    value = "true"
+  }
+  
+  set {
+    name  = "controller.config.use-proxy-protocol"
+    value = "true"
+  }
+  
+  # Enable use of floating IPs on the load balancer
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-floating-ip"
+    value = "true"
+  }
+  
+  # Specify the floating IP to use
+  set {
+    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-floating-ip-assignment"
+    value = var.reserved_ip
+  }
+  
+  # Wait long enough for the load balancer to be fully provisioned
+  timeout = 900
+  
+  depends_on = [kubernetes_namespace.monet_app]
 }
 
 # Install cert-manager for SSL certificates

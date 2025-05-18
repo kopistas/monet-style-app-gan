@@ -40,4 +40,10 @@ variable "deploy_mlflow" {
   description = "Whether to deploy MLflow"
   default = false
   type    = bool
+}
+
+variable "reserved_ip" {
+  description = "The floating IP address to use for the load balancer"
+  default = ""
+  type    = string
 } 

@@ -292,7 +292,7 @@ jobs:
           
           # Apply cert-manager issuer
           envsubst < kubernetes/cert-manager/issuer.yaml | kubectl apply -f -
-
+          
       - name: Apply Kubernetes Manifests - MLflow
         run: |
           # Check if MLflow should be deployed
