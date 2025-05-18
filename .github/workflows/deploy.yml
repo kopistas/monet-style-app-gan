@@ -205,4 +205,22 @@ jobs:
           echo "Using bucket name: $BUCKET_NAME"
           
           # Use the dedicated upload script from the repository
-          python scripts/upload_model_to_s3.py 
+          python scripts/upload_model_to_s3.py
+          
+      - name: Wait and Verify Deployment
+        run: |
+          echo "Waiting for services to initialize..."
+          sleep 60
+          
+          echo "Installing required packages for verification..."
+          pip install requests urllib3
+          
+          echo "Running deployment verification..."
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          python scripts/verify_deployment.py
+          
+          echo "Verification complete!"
+          
+          echo "You can access the applications at:"
+          echo "- MLflow: https://${{ env.MLFLOW_DOMAIN }}"
+          echo "- Monet App: https://${{ env.APP_DOMAIN }}" 
