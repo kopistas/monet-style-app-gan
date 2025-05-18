@@ -1,0 +1,205 @@
+name: Deploy Infrastructure and Applications
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}
+  TF_VERSION: "1.5.7"
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+          DO_SPACES_ACCESS_KEY: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          DO_SPACES_SECRET_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
+          TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
+        run: |
+          terraform init -backend-config="access_key=$DO_SPACES_ACCESS_KEY" -backend-config="secret_key=$DO_SPACES_SECRET_KEY"
+
+      - name: Terraform Plan
+        working-directory: terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+          TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+          TF_VAR_do_region: ${{ secrets.DO_REGION || 'fra1' }}
+          TF_VAR_do_spaces_region: ${{ secrets.DO_SPACES_REGION || 'fra1' }}
+          TF_VAR_do_spaces_name: ${{ secrets.DO_SPACES_NAME || 'monet-models' }}
+          TF_VAR_app_domain: ${{ secrets.APP_DOMAIN || 'monet-app.example.com' }}
+          TF_VAR_mlflow_domain: ${{ secrets.MLFLOW_DOMAIN || 'mlflow.example.com' }}
+          TF_VAR_unsplash_api_key: ${{ secrets.UNSPLASH_API_KEY || '' }}
+          TF_VAR_email_for_ssl: ${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}
+          TF_VAR_use_do_dns: ${{ secrets.USE_DO_DNS || 'false' }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        env:
+          DO_TOKEN: ${{ secrets.DO_TOKEN }}
+          TF_VAR_do_token: ${{ secrets.DO_TOKEN }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Save Terraform Output
+        working-directory: terraform
+        run: |
+          mkdir -p ../kubernetes/output
+          terraform output -json > ../kubernetes/output/terraform-output.json
+
+      - name: Upload Kubernetes Config
+        uses: actions/upload-artifact@v3
+        with:
+          name: kubeconfig
+          path: terraform/kubeconfig.yaml
+          retention-days: 1
+
+      - name: Upload Terraform Output
+        uses: actions/upload-artifact@v3
+        with:
+          name: terraform-output
+          path: kubernetes/output/terraform-output.json
+          retention-days: 1
+
+  build-web-app:
+    name: Build Web App
+    runs-on: ubuntu-latest
+    needs: terraform
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: kubernetes/web-app/Dockerfile
+          push: true
+          tags: ${{ env.DOCKER_REGISTRY }}/monet-web-app:${{ github.sha }},${{ env.DOCKER_REGISTRY }}/monet-web-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy Applications
+    runs-on: ubuntu-latest
+    needs: [terraform, build-web-app]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download Kubeconfig
+        uses: actions/download-artifact@v3
+        with:
+          name: kubeconfig
+          path: .kube
+
+      - name: Download Terraform Output
+        uses: actions/download-artifact@v3
+        with:
+          name: terraform-output
+          path: kubernetes/output
+
+      - name: Set up Kubernetes CLI
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Export Environment Variables
+        run: |
+          echo "DO_SPACES_REGION=$(jq -r '.spaces_region.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          echo "DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+          echo "BACKEND_STORE_URI=sqlite:////mlflow-db/mlflow.db" >> $GITHUB_ENV
+          echo "DOCKER_REGISTRY=${DOCKER_REGISTRY}" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
+          echo "APP_DOMAIN=${{ secrets.APP_DOMAIN || 'monet-app.example.com' }}" >> $GITHUB_ENV
+          echo "MLFLOW_DOMAIN=${{ secrets.MLFLOW_DOMAIN || 'mlflow.example.com' }}" >> $GITHUB_ENV
+          echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
+          echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
+          echo "DNS_CONFIG=$(jq -r '.dns_configuration.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
+
+      - name: Display DNS Configuration
+        run: echo "DNS Configuration: $DNS_CONFIG"
+
+      - name: Apply Kubernetes Manifests - Cert Manager
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          # Apply cert-manager issuer
+          envsubst < kubernetes/cert-manager/issuer.yaml | kubectl apply -f -
+
+      - name: Apply Kubernetes Manifests - MLflow
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          # Apply MLflow manifests
+          envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
+
+      - name: Apply Kubernetes Manifests - Web App
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          # Apply Web App manifests
+          envsubst < kubernetes/web-app/deployment.yaml | kubectl apply -f -
+
+      - name: Upload Model to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
+          AWS_REGION: ${{ env.DO_SPACES_REGION }}
+          S3_ENDPOINT: https://${{ env.DO_SPACES_REGION }}.digitaloceanspaces.com
+        run: |
+          pip install boto3
+          
+          # Upload the initial model file to S3
+          python - << EOF
+          import boto3
+          from botocore.client import Config
+          import os
+          
+          # Configure S3 client
+          s3_client = boto3.client(
+              's3',
+              endpoint_url=os.environ.get('S3_ENDPOINT'),
+              aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+              aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+              config=Config(signature_version='s3v4'),
+              region_name=os.environ.get('AWS_REGION')
+          )
+          
+          # Upload the model
+          bucket = os.environ.get('DO_SPACES_NAME')
+          model_path = 'photo2monet_cyclegan_mark4.pt'
+          
+          print(f'Uploading model to bucket {bucket}')
+          s3_client.upload_file(model_path, bucket, model_path)
+          print(f'Model uploaded to {bucket}/{model_path}')
+          EOF 
