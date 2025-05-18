@@ -1,12 +1,12 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [ main, master ]
-    paths-ignore:
-      - '**/*.md'
-      - '.github/**'
-      - '!.github/workflows/docker-build.yml'
+  # push:
+  #   branches: [ main, master ]
+  #   paths-ignore:
+  #     - '**/*.md'
+  #     - '.github/**'
+  #     - '!.github/workflows/docker-build.yml'
   
   # Allow manual triggering
   workflow_dispatch:

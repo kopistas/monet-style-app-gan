@@ -147,7 +147,7 @@ jobs:
           echo "DNS_CONFIG=$(jq -r '.dns_configuration.value' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
 
       - name: Display DNS Configuration
-        run: echo "DNS Configuration: $DNS_CONFIG"
+        run: 'echo "DNS Configuration: ${{ env.DNS_CONFIG }}"'
 
       - name: Apply Kubernetes Manifests - Cert Manager
         run: |
