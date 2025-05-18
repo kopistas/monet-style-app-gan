@@ -100,14 +100,42 @@ resource "helm_release" "cert_manager" {
   chart      = "cert-manager"
   namespace  = "cert-manager"
   create_namespace = true
+  version    = "v1.13.3"  # Use a specific, proven version
 
   set {
     name  = "installCRDs"
     value = "true"
   }
   
+  # Configure resource requests/limits
+  set {
+    name  = "resources.requests.cpu"
+    value = "100m"
+  }
+  
+  set {
+    name  = "resources.requests.memory"
+    value = "300Mi"
+  }
+  
+  set {
+    name  = "resources.limits.cpu"
+    value = "200m"
+  }
+  
+  set {
+    name  = "resources.limits.memory"
+    value = "500Mi"
+  }
+  
+  # Enable verbose logging for debugging
+  set {
+    name  = "global.logLevel"
+    value = "4"
+  }
+  
   # Add timeout to ensure it completes
-  timeout = 600
+  timeout = 900
 }
 
 # Create API key secret for Unsplash if provided

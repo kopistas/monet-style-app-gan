@@ -521,11 +521,22 @@ jobs:
           echo "Using S3 endpoint: $S3_ENDPOINT"
           echo "Using bucket name: $BUCKET_NAME"
           
-          # Use the model promotion script to upload and mark as production
-          python scripts/promote_model.py photo2monet_cyclegan_mark4.pt \
-            --bucket $BUCKET_NAME \
-            --version "$(date +%Y%m%d%H%M%S)" \
-            --model-name "monet-style-transfer"
+          # Check if we can access the bucket and list objects
+          echo "Checking if we can access the bucket and list objects..."
+          pip install awscli
+          aws --endpoint-url=$S3_ENDPOINT s3 ls s3://$BUCKET_NAME/ || echo "Failed to list bucket contents"
+          
+          # Check if model file already exists
+          if aws --endpoint-url=$S3_ENDPOINT s3 ls s3://$BUCKET_NAME/photo2monet_cyclegan_mark4.pt; then
+            echo "Model file already exists in bucket, skipping upload"
+          else
+            echo "Model file not found in bucket, uploading..."
+            # Use the model promotion script to upload and mark as production
+            python scripts/promote_model.py photo2monet_cyclegan_mark4.pt \
+              --bucket $BUCKET_NAME \
+              --version "$(date +%Y%m%d%H%M%S)" \
+              --model-name "monet-style-transfer"
+          fi
 
       - name: Wait and Verify Deployment
         timeout-minutes: 15
@@ -556,4 +567,32 @@ jobs:
           echo "- Monet App: https://${{ env.APP_DOMAIN }}"
           if [[ "${{ secrets.DEPLOY_MLFLOW }}" == "true" ]]; then
             echo "- MLflow: https://${{ env.MLFLOW_DOMAIN }}"
-          fi 
+          fi
+
+      - name: Debug Web App CrashLoopBackOff
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+          
+          echo "Checking web app logs to diagnose crash:"
+          POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          
+          if [ -z "$POD_NAME" ]; then
+            echo "No running web app pod found, trying to get logs from any state pod..."
+            POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          fi
+          
+          if [ -n "$POD_NAME" ]; then
+            echo "Getting logs for pod $POD_NAME:"
+            kubectl logs -n monet-app $POD_NAME --previous || kubectl logs -n monet-app $POD_NAME || echo "No logs available"
+            
+            echo "Checking pod details:"
+            kubectl describe pod -n monet-app $POD_NAME || echo "Could not describe pod"
+          else
+            echo "No web app pods found"
+          fi
+          
+          echo "Checking persistent volume claim status:"
+          kubectl get pvc -n monet-app || echo "No PVCs found"
+          
+          echo "Checking if model storage is working:"
+          kubectl describe pvc -n monet-app models-storage || echo "Could not describe PVC" 
