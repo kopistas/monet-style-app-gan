@@ -5,6 +5,7 @@
 
 # Create namespaces
 resource "kubernetes_namespace" "mlflow" {
+  count = var.deploy_mlflow ? 1 : 0
   metadata {
     name = "mlflow"
   }
@@ -18,6 +19,7 @@ resource "kubernetes_namespace" "monet_app" {
 
 # Create secrets for S3 access
 resource "kubernetes_secret" "spaces_credentials_mlflow" {
+  count = var.deploy_mlflow ? 1 : 0
   metadata {
     name      = "spaces-credentials"
     namespace = "mlflow"
@@ -27,6 +29,8 @@ resource "kubernetes_secret" "spaces_credentials_mlflow" {
     access_key = var.do_spaces_access_key
     secret_key = var.do_spaces_secret_key
   }
+
+  depends_on = [kubernetes_namespace.mlflow]
 }
 
 resource "kubernetes_secret" "spaces_credentials_app" {
@@ -39,6 +43,8 @@ resource "kubernetes_secret" "spaces_credentials_app" {
     access_key = var.do_spaces_access_key
     secret_key = var.do_spaces_secret_key
   }
+
+  depends_on = [kubernetes_namespace.monet_app]
 }
 
 # Install NGINX Ingress Controller

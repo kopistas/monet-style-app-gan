@@ -62,4 +62,10 @@ variable "use_do_dns" {
   description = "Whether to use DigitalOcean DNS"
   default = false
   type    = bool
+}
+
+variable "load_balancer_ip" {
+  description = "Load balancer IP for DNS records"
+  default = ""
+  type    = string
 } 

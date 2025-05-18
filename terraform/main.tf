@@ -16,6 +16,10 @@ terraform {
       source = "hashicorp/time"
       version = "~> 0.9.1"
     }
+    null = {
+      source = "hashicorp/null"
+      version = "~> 3.2.1"
+    }
   }
   backend "s3" {
     endpoint                    = "ams3.digitaloceanspaces.com"
@@ -49,6 +53,7 @@ module "infrastructure" {
   app_domain = var.app_domain
   mlflow_domain = var.mlflow_domain
   use_do_dns = var.use_do_dns
+  load_balancer_ip = var.load_balancer_ip
 }
 
 # Configure Kubernetes providers with the cluster details
@@ -66,13 +71,18 @@ provider "helm" {
   }
 }
 
+# This null resource ensures Kubernetes providers are only used after the cluster is available
+resource "null_resource" "kubernetes_config_delay" {
+  depends_on = [module.infrastructure.kubernetes_cluster_id]
+}
+
 # Kubernetes Module - Only runs after cluster is available
 module "kubernetes_resources" {
   source = "./modules/kubernetes"
   
   # The providers are now configured at the root level
   # so we don't need to pass kubeconfig but we use depends_on to ensure proper order
-  depends_on = [module.infrastructure]
+  depends_on = [module.infrastructure, null_resource.kubernetes_config_delay]
   
   do_spaces_region = var.do_spaces_region
   do_spaces_name = var.do_spaces_name
@@ -82,6 +92,7 @@ module "kubernetes_resources" {
   mlflow_domain = var.mlflow_domain
   email_for_ssl = var.email_for_ssl
   unsplash_api_key = var.unsplash_api_key
+  deploy_mlflow = var.deploy_mlflow
 }
 
 # Variables
@@ -164,6 +175,18 @@ variable "use_do_dns" {
   type    = bool
 }
 
+variable "deploy_mlflow" {
+  description = "Whether to deploy MLflow"
+  default = false
+  type    = bool
+}
+
+variable "load_balancer_ip" {
+  description = "Load balancer IP for DNS records (set automatically after initial deployment)"
+  default = ""
+  type    = string
+}
+
 # Outputs
 output "kubernetes_cluster_id" {
   value = module.infrastructure.kubernetes_cluster_id
@@ -183,4 +206,9 @@ output "spaces_region" {
 
 output "dns_configuration" {
   value = module.infrastructure.dns_configuration
+}
+
+output "load_balancer_ip" {
+  value = var.load_balancer_ip
+  description = "The IP address of the load balancer"
 } 

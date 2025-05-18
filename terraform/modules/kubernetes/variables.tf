@@ -34,4 +34,10 @@ variable "email_for_ssl" {
 variable "unsplash_api_key" {
   description = "Unsplash API key for image search"
   default = ""
+}
+
+variable "deploy_mlflow" {
+  description = "Whether to deploy MLflow"
+  default = false
+  type    = bool
 } 

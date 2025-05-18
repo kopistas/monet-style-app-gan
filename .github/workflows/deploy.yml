@@ -50,6 +50,8 @@ jobs:
           TF_VAR_unsplash_api_key: ${{ secrets.UNSPLASH_API_KEY || '' }}
           TF_VAR_email_for_ssl: ${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}
           TF_VAR_use_do_dns: ${{ secrets.USE_DO_DNS || 'false' }}
+          TF_VAR_deploy_mlflow: ${{ secrets.DEPLOY_MLFLOW || 'false' }}
+          TF_VAR_load_balancer_ip: ${{ secrets.LOAD_BALANCER_IP || '' }}
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply
@@ -63,6 +65,8 @@ jobs:
           TF_VAR_do_spaces_region: ${{ secrets.DO_SPACES_REGION || 'nyc3' }}
           TF_VAR_app_domain: ${{ secrets.APP_DOMAIN }}
           TF_VAR_mlflow_domain: ${{ secrets.MLFLOW_DOMAIN }}
+          TF_VAR_deploy_mlflow: ${{ secrets.DEPLOY_MLFLOW || 'false' }}
+          TF_VAR_load_balancer_ip: ${{ secrets.LOAD_BALANCER_IP || '' }}
         run: terraform apply -auto-approve tfplan
 
       - name: Save Terraform Output
@@ -291,39 +295,44 @@ jobs:
 
       - name: Apply Kubernetes Manifests - MLflow
         run: |
-          # MLflow deployment commented out to prevent public exposure
-          echo "Skipping MLflow deployment for security reasons"
-          
-          # Instead, actively remove any existing MLflow resources
-          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
-          echo "Removing existing MLflow deployment..."
-          
-          # Delete MLflow ingress
-          kubectl delete ingress -n mlflow mlflow --ignore-not-found=true
-          
-          # Delete MLflow service
-          kubectl delete service -n mlflow mlflow --ignore-not-found=true
-          
-          # Delete MLflow deployment
-          kubectl delete deployment -n mlflow mlflow --ignore-not-found=true
-          
-          # Keep the namespace and PVC for future use, but don't deploy MLflow
-          echo "MLflow resources have been removed for security"
-          
-          # The following lines are commented out to prevent MLflow exposure:
-          # # Apply MLflow manifests
-          # envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
-          # 
-          # # Wait for MLflow PVC to be bound (give it up to 2 minutes)
-          # echo "Waiting for MLflow PVC to be provisioned..."
-          # kubectl wait --for=condition=Ready pvc/mlflow-database -n mlflow --timeout=120s || true
-          # 
-          # # Force rollout of MLflow deployment to apply changes
-          # kubectl rollout restart deployment/mlflow -n mlflow
-          # 
-          # # Wait for initial pod creation but don't fail pipeline if it's not ready yet
-          # echo "Waiting for initial MLflow pod creation..."
-          # kubectl rollout status deployment/mlflow -n mlflow --timeout=30s || true
+          # Check if MLflow should be deployed
+          if [[ "${{ secrets.DEPLOY_MLFLOW }}" == "true" ]]; then
+            echo "Deploying MLflow as specified by DEPLOY_MLFLOW=true"
+            export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+            
+            # Apply MLflow manifests
+            envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
+            
+            # Wait for MLflow PVC to be bound (give it up to 2 minutes)
+            echo "Waiting for MLflow PVC to be provisioned..."
+            kubectl wait --for=condition=Ready pvc/mlflow-database -n mlflow --timeout=120s || true
+            
+            # Force rollout of MLflow deployment to apply changes
+            kubectl rollout restart deployment/mlflow -n mlflow
+            
+            # Wait for initial pod creation but don't fail pipeline if it's not ready yet
+            echo "Waiting for initial MLflow pod creation..."
+            kubectl rollout status deployment/mlflow -n mlflow --timeout=30s || true
+            
+            echo "MLflow deployment complete"
+          else
+            echo "MLflow deployment skipped (DEPLOY_MLFLOW=false or not set)"
+            
+            # Optionally, clean up MLflow resources if they exist
+            export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+            echo "Removing any existing MLflow deployment..."
+            
+            # Delete MLflow ingress
+            kubectl delete ingress -n mlflow mlflow --ignore-not-found=true
+            
+            # Delete MLflow service
+            kubectl delete service -n mlflow mlflow --ignore-not-found=true
+            
+            # Delete MLflow deployment
+            kubectl delete deployment -n mlflow mlflow --ignore-not-found=true
+            
+            echo "MLflow resources have been removed (if they existed)"
+          fi
 
       - name: Apply Kubernetes Manifests - Web App
         run: |
@@ -378,10 +387,22 @@ jobs:
           
           echo "Running deployment verification..."
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
-          # Only verify monet-app namespace since MLflow is disabled
-          python scripts/verify_deployment.py --timeout 600 --skip-wait --namespaces monet-app
+          
+          # Determine namespaces to verify
+          NAMESPACES="monet-app"
+          if [[ "${{ secrets.DEPLOY_MLFLOW }}" == "true" ]]; then
+            NAMESPACES="$NAMESPACES,mlflow"
+            echo "Verifying both monet-app and mlflow namespaces"
+          else
+            echo "Only verifying monet-app namespace (MLflow not deployed)"
+          fi
+          
+          python scripts/verify_deployment.py --timeout 600 --skip-wait --namespaces $NAMESPACES
           
           echo "Verification complete!"
           
           echo "You can access the application at:"
-          echo "- Monet App: https://${{ env.APP_DOMAIN }}" 
+          echo "- Monet App: https://${{ env.APP_DOMAIN }}"
+          if [[ "${{ secrets.DEPLOY_MLFLOW }}" == "true" ]]; then
+            echo "- MLflow: https://${{ env.MLFLOW_DOMAIN }}"
+          fi 
