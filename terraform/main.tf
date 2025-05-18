@@ -93,7 +93,6 @@ module "kubernetes_resources" {
   email_for_ssl = var.email_for_ssl
   unsplash_api_key = var.unsplash_api_key
   deploy_mlflow = var.deploy_mlflow
-  reserved_ip = module.infrastructure.reserved_ip
 }
 
 # Variables
@@ -210,6 +209,6 @@ output "dns_configuration" {
 }
 
 output "load_balancer_ip" {
-  value = module.infrastructure.reserved_ip
-  description = "The IP address of the load balancer (reserved IP)"
+  value = var.load_balancer_ip
+  description = "The IP address of the load balancer"
 } 

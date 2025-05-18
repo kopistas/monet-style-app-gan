@@ -69,10 +69,16 @@ jobs:
           TF_VAR_load_balancer_ip: ${{ secrets.LOAD_BALANCER_IP || '' }}
         run: terraform apply -auto-approve tfplan
 
-      - name: Save Terraform Output
+      - name: Save Terraform Output and Update for Next Run
         working-directory: terraform
         run: |
           mkdir -p ../kubernetes/output
+          
+          # Add the load balancer IP to env vars for next terraform run
+          if [ -n "$LOAD_BALANCER_IP" ]; then
+            echo "TF_VAR_load_balancer_ip=$LOAD_BALANCER_IP" >> $GITHUB_ENV
+          fi
+          
           # Save raw output to a file
           terraform output -json > ../kubernetes/output/terraform-output-raw.json
           
@@ -96,7 +102,12 @@ jobs:
             terraform output -raw spaces_region 2>/dev/null | xargs -I{} echo "  \"spaces_region\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
             terraform output -raw spaces_bucket_name 2>/dev/null | xargs -I{} echo "  \"spaces_bucket_name\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
             terraform output -raw dns_configuration 2>/dev/null | xargs -I{} echo "  \"dns_configuration\": { \"value\": \"{}\" }," >> ../kubernetes/output/terraform-output.json
-            terraform output -raw load_balancer_ip 2>/dev/null | xargs -I{} echo "  \"load_balancer_ip\": { \"value\": \"{}\" }" >> ../kubernetes/output/terraform-output.json
+            # Use load_balancer_ip from environment if available, otherwise empty
+            if [ -n "$LOAD_BALANCER_IP" ]; then
+              echo "  \"load_balancer_ip\": { \"value\": \"$LOAD_BALANCER_IP\" }" >> ../kubernetes/output/terraform-output.json
+            else
+              echo "  \"load_balancer_ip\": { \"value\": \"\" }" >> ../kubernetes/output/terraform-output.json
+            fi
             echo "}" >> ../kubernetes/output/terraform-output.json
           fi
           
@@ -293,48 +304,91 @@ jobs:
           
           # Apply cert-manager issuer
           envsubst < kubernetes/cert-manager/issuer.yaml | kubectl apply -f -
-          
-      - name: Apply Floating IP Assignment Job
+
+      - name: Get Load Balancer IP and Update DNS
         run: |
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
           
-          # Get the reserved IP directly from the Terraform output file
-          echo "Reading floating IP from Terraform output file..."
+          # Wait for NGINX Ingress controller service to get an external IP
+          echo "Waiting for NGINX Ingress controller to get an external IP..."
           
-          # The Terraform output JSON file has already been created in a previous step
-          if [ -f "kubernetes/output/terraform-output.json" ]; then
-            FLOATING_IP=$(jq -r '.load_balancer_ip.value // ""' kubernetes/output/terraform-output.json)
+          EXTERNAL_IP=""
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
             
-            if [ -n "$FLOATING_IP" ]; then
-              echo "Found floating IP in Terraform output: $FLOATING_IP"
-            else
-              echo "ERROR: Floating IP not found in Terraform output file."
-              echo "Content of terraform-output.json:"
-              cat kubernetes/output/terraform-output.json
-              exit 1
+            if [ -n "$EXTERNAL_IP" ]; then
+              echo "Load balancer has received IP: $EXTERNAL_IP"
+              break
             fi
-          else
-            echo "ERROR: Terraform output file not found at kubernetes/output/terraform-output.json"
-            ls -la kubernetes/output/ || echo "Output directory doesn't exist or is empty"
-            exit 1
+            
+            echo "Waiting for load balancer external IP (attempt $i/30)..."
+            sleep 10
+          done
+          
+          if [ -z "$EXTERNAL_IP" ]; then
+            echo "WARNING: Load balancer did not receive an external IP within timeout."
+            echo "DNS records will need to be updated manually."
+            exit 0
           fi
           
-          echo "Using floating IP: $FLOATING_IP"
+          echo "Load balancer IP: $EXTERNAL_IP"
           
-          # Create base64 encoded API token for the job secret
-          # Fix the base64 encoding to ensure it's properly formatted
-          DO_API_TOKEN_BASE64=$(echo -n "${{ secrets.DO_TOKEN }}" | base64 | tr -d '\n')
+          # Save the load balancer IP for future use
+          echo "LOAD_BALANCER_IP=$EXTERNAL_IP" >> $GITHUB_ENV
           
-          # Apply the job manifest with environment variables substituted
-          FLOATING_IP=$FLOATING_IP DO_API_TOKEN_BASE64=$DO_API_TOKEN_BASE64 envsubst < kubernetes/do-floating-ip/assign-ip-job.yaml | kubectl apply -f -
+          # For next Terraform runs, update DNS directly
+          echo "For future Terraform runs, set load_balancer_ip=$EXTERNAL_IP"
           
-          # Wait for the job to start
-          echo "Waiting for floating IP assignment job to start..."
-          sleep 10
+          # Update DNS records using DigitalOcean API if use_do_dns is enabled
+          if [[ "${{ secrets.USE_DO_DNS }}" == "true" ]]; then
+            echo "Updating DNS records to point to $EXTERNAL_IP..."
+            
+            # Get domain IDs
+            if [[ -n "${{ secrets.APP_DOMAIN }}" ]]; then
+              echo "Updating ${{ secrets.APP_DOMAIN }} DNS record..."
+              
+              # Use the DO API to get record ID and update it
+              RECORDS=$(curl -s -X GET \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                "https://api.digitalocean.com/v2/domains/${{ secrets.APP_DOMAIN }}/records")
+              
+              RECORD_ID=$(echo $RECORDS | jq -r '.domain_records[] | select(.type=="A" and .name=="@") | .id')
+              
+              if [[ -n "$RECORD_ID" ]]; then
+                curl -s -X PUT \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                  -d "{\"data\":\"$EXTERNAL_IP\"}" \
+                  "https://api.digitalocean.com/v2/domains/${{ secrets.APP_DOMAIN }}/records/$RECORD_ID"
+                
+                echo "Updated ${{ secrets.APP_DOMAIN }} DNS record to point to $EXTERNAL_IP"
+              fi
+            fi
+            
+            if [[ -n "${{ secrets.MLFLOW_DOMAIN }}" ]]; then
+              echo "Updating ${{ secrets.MLFLOW_DOMAIN }} DNS record..."
+              
+              # Use the DO API to get record ID and update it
+              RECORDS=$(curl -s -X GET \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                "https://api.digitalocean.com/v2/domains/${{ secrets.MLFLOW_DOMAIN }}/records")
+              
+              RECORD_ID=$(echo $RECORDS | jq -r '.domain_records[] | select(.type=="A" and .name=="@") | .id')
+              
+              if [[ -n "$RECORD_ID" ]]; then
+                curl -s -X PUT \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                  -d "{\"data\":\"$EXTERNAL_IP\"}" \
+                  "https://api.digitalocean.com/v2/domains/${{ secrets.MLFLOW_DOMAIN }}/records/$RECORD_ID"
+                
+                echo "Updated ${{ secrets.MLFLOW_DOMAIN }} DNS record to point to $EXTERNAL_IP"
+              fi
+            fi
+          fi
           
-          # Follow the job logs (non-blocking so the workflow can continue)
-          kubectl logs -f -n kube-system job/assign-floating-ip --follow=false || true
-      
       - name: Apply Kubernetes Manifests - MLflow
         run: |
           # Check if MLflow should be deployed

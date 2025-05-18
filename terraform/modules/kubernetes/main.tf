@@ -71,18 +71,6 @@ resource "helm_release" "nginx_ingress" {
     value = "true"
   }
   
-  # Enable use of floating IPs on the load balancer
-  set {
-    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-floating-ip"
-    value = "true"
-  }
-  
-  # Specify the floating IP to use
-  set {
-    name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-floating-ip-assignment"
-    value = var.reserved_ip
-  }
-  
   # Wait long enough for the load balancer to be fully provisioned
   timeout = 900
   
