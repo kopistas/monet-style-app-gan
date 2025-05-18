@@ -4,7 +4,7 @@ metadata:
   name: mlflow-config
   namespace: mlflow
 data:
-  BACKEND_STORE_URI: "${BACKEND_STORE_URI}"
+  BACKEND_STORE_URI: "file:///mlflow-db/mlflow.db"
   DEFAULT_ARTIFACT_ROOT: "s3://${DO_SPACES_NAME}/mlflow-artifacts"
   MLFLOW_S3_ENDPOINT_URL: "https://${DO_SPACES_REGION}.digitaloceanspaces.com"
   AWS_REGION: "${DO_SPACES_REGION}"
@@ -39,6 +39,13 @@ spec:
       labels:
         app: mlflow
     spec:
+      initContainers:
+      - name: init-db-dir
+        image: busybox
+        command: ['sh', '-c', 'mkdir -p /mlflow-db && chmod 777 /mlflow-db']
+        volumeMounts:
+        - name: mlflow-database
+          mountPath: /mlflow-db
       containers:
       - name: mlflow
         image: ghcr.io/mlflow/mlflow:v2.11.1
@@ -76,13 +83,16 @@ spec:
             secretKeyRef:
               name: spaces-credentials
               key: secret_key
+        command: ["/bin/sh", "-c"]
         args:
-        - "server"
-        - "--host=0.0.0.0"
-        - "--port=5000"
-        - "--backend-store-uri=$(BACKEND_STORE_URI)"
-        - "--default-artifact-root=$(DEFAULT_ARTIFACT_ROOT)"
-        - "--serve-artifacts"
+        - |
+          mkdir -p /mlflow-db
+          mlflow server \
+          --host=0.0.0.0 \
+          --port=5000 \
+          --backend-store-uri=$(BACKEND_STORE_URI) \
+          --default-artifact-root=$(DEFAULT_ARTIFACT_ROOT) \
+          --serve-artifacts
         resources:
           requests:
             memory: "512Mi"

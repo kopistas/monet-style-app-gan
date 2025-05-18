@@ -6,7 +6,7 @@ metadata:
   labels:
     app: monet-web-app
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: monet-web-app
@@ -54,26 +54,26 @@ spec:
               optional: true
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "256Mi"
+            cpu: "100m"
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "1Gi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /health
             port: 5080
-          initialDelaySeconds: 60
+          initialDelaySeconds: 90
           periodSeconds: 30
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 5080
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 10
-          timeoutSeconds: 5
+          timeoutSeconds: 10
           failureThreshold: 3
 ---
 apiVersion: v1

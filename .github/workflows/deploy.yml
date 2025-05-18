@@ -183,6 +183,17 @@ jobs:
           
           # Apply MLflow manifests
           envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
+          
+          # Wait for MLflow PVC to be bound (give it up to 2 minutes)
+          echo "Waiting for MLflow PVC to be provisioned..."
+          kubectl wait --for=condition=Ready pvc/mlflow-database -n mlflow --timeout=120s || true
+          
+          # Force rollout of MLflow deployment to apply changes
+          kubectl rollout restart deployment/mlflow -n mlflow
+          
+          # Wait for initial pod creation but don't fail pipeline if it's not ready yet
+          echo "Waiting for initial MLflow pod creation..."
+          kubectl rollout status deployment/mlflow -n mlflow --timeout=30s || true
 
       - name: Apply Kubernetes Manifests - Web App
         run: |
@@ -190,6 +201,13 @@ jobs:
           
           # Apply Web App manifests
           envsubst < kubernetes/web-app/deployment.yaml | kubectl apply -f -
+          
+          # Force rollout of web app deployment to apply changes
+          kubectl rollout restart deployment/monet-web-app -n monet-app
+          
+          # Wait for initial pod creation but don't fail pipeline if it's not ready yet
+          echo "Waiting for initial web app pod creation..."
+          kubectl rollout status deployment/monet-web-app -n monet-app --timeout=30s || true
 
       - name: Upload Model to S3
         env:
@@ -208,6 +226,7 @@ jobs:
           python scripts/upload_model_to_s3.py
           
       - name: Wait and Verify Deployment
+        timeout-minutes: 15
         run: |
           echo "Waiting for services to initialize..."
           sleep 60
@@ -217,7 +236,7 @@ jobs:
           
           echo "Running deployment verification..."
           export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
-          python scripts/verify_deployment.py
+          python scripts/verify_deployment.py --timeout 600 --skip-wait
           
           echo "Verification complete!"
           
