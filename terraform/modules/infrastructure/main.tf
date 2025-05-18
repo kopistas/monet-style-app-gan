@@ -20,6 +20,12 @@ resource "digitalocean_kubernetes_cluster" "monet_cluster" {
   }
 }
 
+# Sleep to allow the load balancer time to initialize
+resource "time_sleep" "wait_for_lb" {
+  depends_on = [digitalocean_kubernetes_cluster.monet_cluster]
+  create_duration = "60s"
+}
+
 # Create a Spaces bucket for model storage
 resource "digitalocean_spaces_bucket" "model_storage" {
   name   = var.do_spaces_name

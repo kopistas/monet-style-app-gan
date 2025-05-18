@@ -12,6 +12,10 @@ terraform {
       source = "hashicorp/helm"
       version = "~> 2.0"
     }
+    time = {
+      source = "hashicorp/time"
+      version = "~> 0.9.1"
+    }
   }
   backend "s3" {
     endpoint                    = "ams3.digitaloceanspaces.com"
@@ -21,6 +25,13 @@ terraform {
     skip_credentials_validation = true
     skip_metadata_api_check     = true
   }
+}
+
+# Configure DigitalOcean provider at root level
+provider "digitalocean" {
+  token             = var.do_token
+  spaces_access_id  = var.do_spaces_access_key
+  spaces_secret_key = var.do_spaces_secret_key
 }
 
 # Infrastructure Module - Core Resources
