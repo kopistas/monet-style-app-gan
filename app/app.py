@@ -36,8 +36,15 @@ logger.info(f"DEFAULT_MODEL_NAME env: {os.getenv('DEFAULT_MODEL_NAME', 'Not set'
 logger.info(f"PROMOTED_MODEL_NAME env: {os.getenv('PROMOTED_MODEL_NAME', 'Not set')}")
 
 app = Flask(__name__, static_folder='static')
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 logger.info("Flask app created with CORS support")
+
+# Add custom error handler for all exceptions
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {str(e)}")
+    logger.error(traceback.format_exc())
+    return jsonify({"error": f"Внутренняя ошибка сервера: {str(e)}"}), 500
 
 # Configuration
 ENV_MODEL_PATH = os.getenv('MODEL_PATH', '')
@@ -248,6 +255,16 @@ def process_image(image: Image.Image):
     try:
         t0 = time.time()
 
+        # Check image dimensions to prevent memory issues
+        w, h = image.size
+        max_dim = 1920  # Maximum dimension to process
+        
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            new_w, new_h = int(w * ratio), int(h * ratio)
+            logger.info(f"Resizing large image from {w}x{h} to {new_w}x{new_h}")
+            image = image.resize((new_w, new_h), Image.LANCZOS)
+
         if max(image.size) <= 256:                       # small: old path
             tin = prep(image).unsqueeze(0)               # stay on CPU
             with torch.no_grad():
@@ -263,6 +280,11 @@ def process_image(image: Image.Image):
         image.save(buf_in, format="JPEG")
         out_img.save(buf_out, format="JPEG")
 
+        # Clear RAM after processing
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         return {
             "original":  base64.b64encode(buf_in.getvalue()).decode(),
             "generated": base64.b64encode(buf_out.getvalue()).decode(),
@@ -273,6 +295,12 @@ def process_image(image: Image.Image):
         tb = traceback.format_exc()
         error_msg = f"Ошибка при обработке изображения: {e}\n{tb}"
         logger.exception("Error processing image")
+        
+        # Clear RAM after error
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         return None, error_msg
      
 @app.route('/')
@@ -323,24 +351,24 @@ def model_status():
 @app.route('/api/transform', methods=['POST'])
 def transform_image():
     logger.info("Transform endpoint called")
-    # Check if image was uploaded
-    if 'file' not in request.files:
-        logger.warning("No file part in request")
-        return jsonify({'error': 'Не указан файл'}), 400
-    
-    file = request.files['file']
-    
-    # Check if filename is empty
-    if file.filename == '':
-        logger.warning("No selected file")
-        return jsonify({'error': 'Файл не выбран'}), 400
-    
-    # Check if file is allowed
-    if not allowed_file(file.filename):
-        logger.warning(f"File type not allowed: {file.filename}")
-        return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
-    
     try:
+        # Check if image was uploaded
+        if 'file' not in request.files:
+            logger.warning("No file part in request")
+            return jsonify({'error': 'Не указан файл'}), 400
+        
+        file = request.files['file']
+        
+        # Check if filename is empty
+        if file.filename == '':
+            logger.warning("No selected file")
+            return jsonify({'error': 'Файл не выбран'}), 400
+        
+        # Check if file is allowed
+        if not allowed_file(file.filename):
+            logger.warning(f"File type not allowed: {file.filename}")
+            return jsonify({'error': 'Неподдерживаемый тип файла'}), 400
+        
         # Open and process the image
         img = Image.open(file.stream).convert("RGB")
         logger.info(f"Processing image: {file.filename}")
@@ -355,23 +383,24 @@ def transform_image():
     
     except Exception as e:
         logger.error(f"Error transforming image: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': f'Ошибка при обработке изображения: {str(e)}'}), 500
 
 @app.route('/api/transform-url', methods=['POST'])
 def transform_url():
     logger.info("Transform URL endpoint called")
-    data = request.json
-    
-    if not data or 'url' not in data:
-        logger.warning("No URL provided")
-        return jsonify({'error': 'URL не указан'}), 400
-    
-    image_url = data['url']
-    logger.info(f"Processing image from URL: {image_url}")
-    
     try:
+        data = request.json
+        
+        if not data or 'url' not in data:
+            logger.warning("No URL provided")
+            return jsonify({'error': 'URL не указан'}), 400
+        
+        image_url = data['url']
+        logger.info(f"Processing image from URL: {image_url}")
+        
         # Download the image from the URL
-        response = requests.get(image_url, stream=True)
+        response = requests.get(image_url, stream=True, timeout=15)
         response.raise_for_status()
         
         # Open and process the image
@@ -385,8 +414,13 @@ def transform_url():
         logger.info("Image from URL transformed successfully")
         return jsonify(result)
     
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error downloading image from URL: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': f'Ошибка при загрузке изображения по URL: {str(e)}'}), 500
     except Exception as e:
         logger.error(f"Error transforming image from URL: {e}")
+        logger.error(traceback.format_exc())
         return jsonify({'error': f'Ошибка при обработке изображения по URL: {str(e)}'}), 500
 
 @app.route('/api/unsplash-photos', methods=['GET'])
