@@ -109,10 +109,27 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - ${APP_DOMAIN}
+    - www.${APP_DOMAIN}
+    secretName: monet-web-app-tls
   rules:
   - host: ${APP_DOMAIN}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: monet-web-app
+            port:
+              number: 80
+  - host: www.${APP_DOMAIN}
     http:
       paths:
       - path: /
