@@ -5,6 +5,7 @@ import sys
 import logging
 import time
 import gc
+import traceback
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_cors import CORS
 import torch
@@ -26,12 +27,21 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 logger.info("Environment variables loaded")
 
+# Log all environment variables related to model loading
+logger.info(f"MODEL_PATH env: {os.getenv('MODEL_PATH', 'Not set')}")
+logger.info(f"S3_BUCKET env: {os.getenv('S3_BUCKET', 'Not set')}")
+logger.info(f"S3_ENDPOINT env: {os.getenv('S3_ENDPOINT', 'Not set')}")
+logger.info(f"MODEL_TO_DOWNLOAD env: {os.getenv('MODEL_TO_DOWNLOAD', 'Not set')}")
+logger.info(f"DEFAULT_MODEL_NAME env: {os.getenv('DEFAULT_MODEL_NAME', 'Not set')}")
+logger.info(f"PROMOTED_MODEL_NAME env: {os.getenv('PROMOTED_MODEL_NAME', 'Not set')}")
+
 app = Flask(__name__, static_folder='static')
 CORS(app)
 logger.info("Flask app created with CORS support")
 
 # Configuration
-MODEL_PATH = "photo2monet_cyclegan_mark4.pt"
+ENV_MODEL_PATH = os.getenv('MODEL_PATH', '')
+MODEL_PATH = ENV_MODEL_PATH if ENV_MODEL_PATH else "/app/models/photo2monet_cyclegan_mark4.pt"
 UPLOAD_FOLDER = 'app/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 UNSPLASH_API_KEY = os.getenv('UNSPLASH_API_KEY', '')
@@ -46,6 +56,7 @@ logger.info(f"Using device: {DEVICE}")
 # Model variable initialized as None
 gen = None
 model_loading = False
+model_load_error = None  # Track any model loading errors
 
 # Set up transforms
 prep = T.Compose([
@@ -59,9 +70,52 @@ denorm = lambda x: x.mul(0.5).add(0.5).clamp(0, 1)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def check_model_exists():
+    """Check if the model file exists and log detailed diagnostics"""
+    global MODEL_PATH
+    
+    # Check standard location
+    standard_exists = os.path.exists(MODEL_PATH)
+    logger.info(f"Model at {MODEL_PATH}: {'EXISTS' if standard_exists else 'NOT FOUND'}")
+    
+    # Check alternative locations
+    app_models_path = "/app/models/photo2monet_cyclegan_mark4.pt"
+    alt_exists = os.path.exists(app_models_path)
+    logger.info(f"Model at {app_models_path}: {'EXISTS' if alt_exists else 'NOT FOUND'}")
+    
+    root_model_path = "photo2monet_cyclegan_mark4.pt"
+    root_exists = os.path.exists(root_model_path)
+    logger.info(f"Model at {root_model_path}: {'EXISTS' if root_exists else 'NOT FOUND'}")
+    
+    # Check directories
+    current_dir = os.getcwd()
+    logger.info(f"Current working directory: {current_dir}")
+    
+    try:
+        # List contents of important directories
+        logger.info(f"Contents of current directory: {os.listdir('.')}")
+        if os.path.exists("/app/models"):
+            logger.info(f"Contents of /app/models: {os.listdir('/app/models')}")
+        if os.path.exists(os.path.dirname(MODEL_PATH)):
+            logger.info(f"Contents of {os.path.dirname(MODEL_PATH)}: {os.listdir(os.path.dirname(MODEL_PATH))}")
+    except Exception as e:
+        logger.error(f"Error listing directories: {e}")
+    
+    # If model exists in any location, use that path
+    if standard_exists:
+        return True, MODEL_PATH
+    elif alt_exists:
+        MODEL_PATH = app_models_path
+        return True, MODEL_PATH
+    elif root_exists:
+        MODEL_PATH = root_model_path
+        return True, MODEL_PATH
+    
+    return False, None
+
 def load_model():
-    """Load the model on demand"""
-    global gen, model_loading
+    """Load the model on demand with enhanced error handling"""
+    global gen, model_loading, model_load_error
     
     if gen is not None:
         logger.info("Model already loaded")
@@ -72,23 +126,46 @@ def load_model():
         return False
     
     model_loading = True
+    model_load_error = None
     logger.info(f"Loading model from {MODEL_PATH}")
     
     try:
-        if not os.path.exists(MODEL_PATH):
-            logger.error(f"Model file not found at {MODEL_PATH}")
-            logger.info(f"Current working directory: {os.getcwd()}")
-            logger.info(f"Files in current directory: {os.listdir('.')}")
+        # First check if model exists in any location
+        model_exists, found_path = check_model_exists()
+        
+        if not model_exists:
+            error_msg = f"Model file not found at {MODEL_PATH} or any alternative locations"
+            logger.error(error_msg)
+            model_load_error = error_msg
             model_loading = False
             return False
         
+        # Log model file size for debugging
+        try:
+            model_size = os.path.getsize(found_path) / (1024 * 1024)  # Size in MB
+            logger.info(f"Model file size: {model_size:.2f} MB")
+        except Exception as e:
+            logger.warning(f"Couldn't get model file size: {e}")
+        
         # Load the model
-        gen = torch.jit.load(MODEL_PATH, map_location=DEVICE).eval()
-        logger.info("Model loaded successfully")
+        logger.info(f"Loading model from {found_path}")
+        gen = torch.jit.load(found_path, map_location=DEVICE).eval()
+        
+        # Log model info
+        try:
+            logger.info(f"Model loaded successfully. Device: {next(gen.parameters()).device}")
+            logger.info(f"Model memory: {torch.cuda.memory_allocated() / 1024**2:.2f} MB (allocated)")
+        except Exception as e:
+            logger.warning(f"Error getting model details: {e}")
+            
         model_loading = False
         return True
+        
     except Exception as e:
-        logger.error(f"Error loading model: {e}")
+        tb = traceback.format_exc()
+        error_msg = f"Error loading model: {e}\n{tb}"
+        logger.error(error_msg)
+        model_load_error = error_msg
         model_loading = False
         return False
 
@@ -111,7 +188,7 @@ to_tensor = T.ToTensor()
 norm      = T.Normalize((0.5,)*3, (0.5,)*3)
 eps       = 1e-6
 
-# pre-compute a 2-D cosine window we’ll reuse for every tile (keeps RAM tiny)
+# pre-compute a 2-D cosine window we'll reuse for every tile (keeps RAM tiny)
 def _make_cosine_window(tile):
     ramp = torch.hann_window(tile, periodic=False)      # 1-D raised-cosine
     win  = torch.outer(ramp, ramp)                      # 2-D
@@ -158,11 +235,15 @@ def process_image(image: Image.Image):
     • >256 px → CPU tiling with 256-px tiles.
     Returns (result-dict, None) or (None, error-msg).
     """
-    global gen
+    global gen, model_load_error
 
     if gen is None and not load_model():
-        return None, ("Идет загрузка модели... "
-                      "Пожалуйста, повторите запрос через несколько секунд.")
+        error_message = "Ошибка загрузки модели. "
+        if model_load_error:
+            error_message += f"Подробности: {model_load_error}"
+        else:
+            error_message += "Пожалуйста, повторите запрос через несколько секунд."
+        return None, error_message
 
     try:
         t0 = time.time()
@@ -189,8 +270,10 @@ def process_image(image: Image.Image):
         }, None
 
     except Exception as e:
+        tb = traceback.format_exc()
+        error_msg = f"Ошибка при обработке изображения: {e}\n{tb}"
         logger.exception("Error processing image")
-        return None, f"Ошибка при обработке изображения: {e}"
+        return None, error_msg
      
 @app.route('/')
 def index():
@@ -200,7 +283,7 @@ def index():
 @app.route('/api/model-status', methods=['GET'])
 def model_status():
     """Check if the model is loaded or currently loading"""
-    global gen, model_loading
+    global gen, model_loading, model_load_error
     
     if model_loading:
         status = "loading"
@@ -208,10 +291,33 @@ def model_status():
         status = "loaded"
     else:
         status = "unloaded"
+    
+    # Check if model exists
+    model_exists, found_path = check_model_exists()
+    
+    # Check for potential memory issues
+    memory_info = {}
+    if torch.cuda.is_available():
+        memory_info["cuda_allocated"] = f"{torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+        memory_info["cuda_reserved"] = f"{torch.cuda.memory_reserved() / 1024**2:.2f} MB"
+        memory_info["cuda_max_memory"] = f"{torch.cuda.max_memory_allocated() / 1024**2:.2f} MB"
+    
+    free_mem = 0
+    try:
+        import psutil
+        free_mem = psutil.virtual_memory().available / (1024**3)  # GB
+    except ImportError:
+        free_mem = "psutil not installed"
         
     return jsonify({
         "status": status,
-        "device": DEVICE
+        "device": DEVICE,
+        "error": model_load_error,
+        "model_path": MODEL_PATH,
+        "model_exists": model_exists,
+        "found_at": found_path if model_exists else None,
+        "memory": memory_info,
+        "system_free_memory_gb": free_mem
     })
 
 @app.route('/api/transform', methods=['POST'])
@@ -327,13 +433,19 @@ def get_unsplash_photos():
 def health_check():
     """Simple endpoint to check if server is running"""
     logger.info("Health check endpoint called")
-    global gen, model_loading
+    global gen, model_loading, model_load_error
     
     status = "loading" if model_loading else ("loaded" if gen is not None else "unloaded")
     
+    # Check if model exists
+    model_exists, _ = check_model_exists()
+    
     return jsonify({
         "status": "ok", 
-        "model_status": status, 
+        "model_status": status,
+        "model_exists": model_exists,
+        "model_path": MODEL_PATH,
+        "model_error": model_load_error, 
         "message": "Сервер работает"
     })
 
