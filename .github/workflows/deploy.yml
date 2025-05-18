@@ -143,25 +143,35 @@ jobs:
 
       - name: Export Environment Variables
         run: |
-          # Try to read from Terraform output with error handling
-          if [ -f kubernetes/output/terraform-output.json ]; then
-            # Check if file is valid JSON
-            if jq empty kubernetes/output/terraform-output.json 2>/dev/null; then
-              echo "Terraform output file is valid JSON"
-              echo "DO_SPACES_REGION=$(jq -r '.spaces_region.value // "nyc3"' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
-              echo "DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value // "monet-models"' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
-            else
-              echo "WARNING: Terraform output file is not valid JSON, using default values"
-              echo "DO_SPACES_REGION=nyc3" >> $GITHUB_ENV
-              echo "DO_SPACES_NAME=monet-models" >> $GITHUB_ENV
-            fi
-          else
-            echo "WARNING: Terraform output file not found, using default values"
-            echo "DO_SPACES_REGION=nyc3" >> $GITHUB_ENV
-            echo "DO_SPACES_NAME=monet-models" >> $GITHUB_ENV
+          # Try to read from Terraform output - fail if invalid
+          if [ ! -f kubernetes/output/terraform-output.json ]; then
+            echo "ERROR: Terraform output file not found. Terraform step likely failed."
+            exit 1
           fi
           
-          # Use file-based backend for MLflow to avoid SQLite issues
+          # Validate JSON and extract values or fail
+          if ! jq empty kubernetes/output/terraform-output.json 2>/dev/null; then
+            echo "ERROR: Terraform output file is not valid JSON. Check the Terraform step logs."
+            exit 1
+          fi
+          
+          # Extract required values, fail if any are missing
+          DO_SPACES_REGION=$(jq -r '.spaces_region.value' kubernetes/output/terraform-output.json)
+          DO_SPACES_NAME=$(jq -r '.spaces_bucket_name.value' kubernetes/output/terraform-output.json)
+          
+          if [ "$DO_SPACES_REGION" = "null" ] || [ -z "$DO_SPACES_REGION" ]; then
+            echo "ERROR: spaces_region.value not found in Terraform output"
+            exit 1
+          fi
+          
+          if [ "$DO_SPACES_NAME" = "null" ] || [ -z "$DO_SPACES_NAME" ]; then
+            echo "ERROR: spaces_bucket_name.value not found in Terraform output"
+            exit 1
+          fi
+          
+          # Set environment variables
+          echo "DO_SPACES_REGION=$DO_SPACES_REGION" >> $GITHUB_ENV
+          echo "DO_SPACES_NAME=$DO_SPACES_NAME" >> $GITHUB_ENV
           echo "BACKEND_STORE_URI=file:///mlflow-db/mlflow.db" >> $GITHUB_ENV
           echo "DOCKER_REGISTRY=${DOCKER_REGISTRY}" >> $GITHUB_ENV
           echo "IMAGE_TAG=${{ github.sha }}" >> $GITHUB_ENV
@@ -170,15 +180,13 @@ jobs:
           echo "EMAIL_FOR_SSL=${{ secrets.EMAIL_FOR_SSL || 'admin@example.com' }}" >> $GITHUB_ENV
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
           
-          # Handle DNS configuration with error checking
-          if [ -f kubernetes/output/terraform-output.json ]; then
-            if jq empty kubernetes/output/terraform-output.json 2>/dev/null; then
-              echo "DNS_CONFIG=$(jq -r '.dns_configuration.value // "DNS configuration not found in terraform output"' kubernetes/output/terraform-output.json)" >> $GITHUB_ENV
-            else
-              echo "DNS_CONFIG=Error: Terraform output file is not valid JSON" >> $GITHUB_ENV
-            fi
+          # Set DNS configuration or clear error message
+          DNS_CONFIG=$(jq -r '.dns_configuration.value // "null"' kubernetes/output/terraform-output.json)
+          if [ "$DNS_CONFIG" = "null" ]; then
+            echo "WARNING: dns_configuration.value not found in Terraform output"
+            echo "DNS_CONFIG=Missing in Terraform output" >> $GITHUB_ENV
           else
-            echo "DNS_CONFIG=Error: Terraform output file not found" >> $GITHUB_ENV
+            echo "DNS_CONFIG=$DNS_CONFIG" >> $GITHUB_ENV
           fi
 
       - name: Display Environment Variables
@@ -187,9 +195,7 @@ jobs:
           echo "DO_SPACES_NAME: $DO_SPACES_NAME"
           echo "BACKEND_STORE_URI: $BACKEND_STORE_URI"
           echo "S3 ENDPOINT would be: https://$DO_SPACES_REGION.digitaloceanspaces.com"
-
-      - name: Display DNS Configuration
-        run: 'echo "DNS Configuration: ${{ env.DNS_CONFIG }}"'
+          echo "DNS Configuration: $DNS_CONFIG"
 
       - name: Apply Kubernetes Manifests - Cert Manager
         run: |
