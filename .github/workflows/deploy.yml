@@ -482,6 +482,10 @@ jobs:
           # Apply secrets and configmaps
           envsubst < kubernetes/web-app/spaces-secret.yaml | kubectl apply -f -
           
+          # Clean up any existing certificates first to ensure a fresh start
+          echo "Cleaning up any existing certificates..."
+          kubectl delete certificate -n monet-app monet-web-app-tls --ignore-not-found=true
+          
           # Apply certificate resource first to give it more time to be processed
           echo "Applying web app certificate..."
           envsubst < kubernetes/cert-manager/certificate.yaml | kubectl apply -f -
