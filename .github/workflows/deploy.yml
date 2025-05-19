@@ -395,6 +395,8 @@ jobs:
           if [[ "${{ secrets.DEPLOY_MLFLOW }}" == "true" ]]; then
             echo "Deploying MLflow as specified by DEPLOY_MLFLOW=true"
             export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+
+            kubectl get storageclass
             
             # Apply MLflow manifests
             envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
