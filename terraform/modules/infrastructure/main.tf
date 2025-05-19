@@ -72,6 +72,15 @@ resource "digitalocean_record" "mlflow_record" {
   ttl    = 300
 }
 
+resource "digitalocean_record" "app_record_www" {
+  count  = var.use_do_dns && var.app_domain != "" ? 1 : 0
+  domain = digitalocean_domain.app_domain[0].name
+  type   = "A"
+  name   = "www"
+  value  = var.load_balancer_ip != "" ? var.load_balancer_ip : "127.0.0.1"
+  ttl    = 300
+}
+
 # Outputs
 output "kubernetes_cluster_id" {
   value = digitalocean_kubernetes_cluster.monet_cluster.id

@@ -364,6 +364,29 @@ jobs:
                 
                 echo "Updated ${{ secrets.APP_DOMAIN }} DNS record to point to $EXTERNAL_IP"
               fi
+              
+              # Handle www subdomain
+              RECORD_ID_WWW=$(echo $RECORDS | jq -r '.domain_records[] | select(.type=="A" and .name=="www") | .id')
+              
+              if [[ -n "$RECORD_ID_WWW" ]]; then
+                # Update existing www record
+                curl -s -X PUT \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                  -d "{\"data\":\"$EXTERNAL_IP\"}" \
+                  "https://api.digitalocean.com/v2/domains/${{ secrets.APP_DOMAIN }}/records/$RECORD_ID_WWW"
+                
+                echo "Updated www.${{ secrets.APP_DOMAIN }} DNS record to point to $EXTERNAL_IP"
+              else
+                # Create new www record if it doesn't exist
+                curl -s -X POST \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${{ secrets.DO_TOKEN }}" \
+                  -d "{\"type\":\"A\",\"name\":\"www\",\"data\":\"$EXTERNAL_IP\",\"ttl\":300}" \
+                  "https://api.digitalocean.com/v2/domains/${{ secrets.APP_DOMAIN }}/records"
+                
+                echo "Created new www.${{ secrets.APP_DOMAIN }} DNS record pointing to $EXTERNAL_IP"
+              fi
             fi
             
             if [[ -n "${{ secrets.MLFLOW_DOMAIN }}" ]]; then
