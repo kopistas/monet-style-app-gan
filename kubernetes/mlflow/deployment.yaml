@@ -8,6 +8,7 @@ data:
   DEFAULT_ARTIFACT_ROOT: "s3://${DO_SPACES_NAME}/mlflow-artifacts"
   MLFLOW_S3_ENDPOINT_URL: "https://${DO_SPACES_REGION}.digitaloceanspaces.com"
   AWS_REGION: "${DO_SPACES_REGION}"
+  AWS_DEFAULT_REGION: "${DO_SPACES_REGION}"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -73,6 +74,11 @@ spec:
             configMapKeyRef:
               name: mlflow-config
               key: AWS_REGION
+        - name: AWS_DEFAULT_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: mlflow-config
+              key: AWS_DEFAULT_REGION
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
