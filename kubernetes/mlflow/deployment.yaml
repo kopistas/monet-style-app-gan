@@ -92,6 +92,7 @@ spec:
         command: ["/bin/sh", "-c"]
         args:
         - |
+          pip install boto3
           mkdir -p /mlflow-db
           mlflow server \
           --host=0.0.0.0 \
