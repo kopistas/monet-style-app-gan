@@ -486,6 +486,11 @@ jobs:
           echo "Cleaning up any existing certificates..."
           kubectl delete certificate -n monet-app monet-web-app-tls --ignore-not-found=true
           
+          # Also remove any stale ACME orders and challenges that can block issuance
+          echo "Cleaning up stale ACME orders and challenges in monet-app namespace..."
+          kubectl delete orders.acme.cert-manager.io -n monet-app --all --ignore-not-found=true
+          kubectl delete challenges.acme.cert-manager.io -n monet-app --all --ignore-not-found=true
+          
           # Apply certificate resource first to give it more time to be processed
           echo "Applying web app certificate..."
           envsubst < kubernetes/cert-manager/certificate.yaml | kubectl apply -f -
