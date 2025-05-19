@@ -430,6 +430,10 @@ jobs:
             kubectl create secret generic basic-auth --from-file=/tmp/auth -n mlflow --dry-run=client -o yaml | kubectl apply -f -
             # Remove the temporary file for security
             rm /tmp/auth
+
+            # Apply S3 credentials secret for MLflow
+            echo "Applying S3 credentials secret for MLflow..."
+            envsubst < kubernetes/mlflow/spaces-secret.yaml | kubectl apply -f -
             
             # Apply the MLflow certificate
             echo "Applying MLflow certificate..."
