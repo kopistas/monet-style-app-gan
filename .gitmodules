@@ -1,0 +1,3 @@
+[submodule "training/cyclegan"]
+	path = training/cyclegan
+	url = git@github.com:abstract-girl/pytorch-CycleGAN-and-pix2pix-mlflow.git
