@@ -76,15 +76,43 @@ resource "helm_release" "nginx_ingress" {
     value = "off"
   }
   
-  # Enable proxy protocol for proper client IP forwarding
+  # Disable PROXY protocol by default to allow ACME challenges to work
   set {
     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/do-loadbalancer-enable-proxy-protocol"
-    value = "true"
+    value = "false"
   }
   
   set {
     name  = "controller.config.use-proxy-protocol"
+    value = "false"
+  }
+  
+  # Configure settings for ACME challenges
+  set {
+    name  = "controller.config.allow-snippet-annotations"
     value = "true"
+  }
+  
+  set {
+    name  = "controller.config.http-snippet"
+    value = <<-EOT
+      # Always trust traffic to /.well-known/acme-challenge/
+      map $http_x_forwarded_proto $acme_redirect {
+        default '';
+        https '';
+      }
+    EOT
+  }
+  
+  # Additional resource configuration to ensure stability
+  set {
+    name  = "controller.resources.requests.cpu"
+    value = "100m"
+  }
+  
+  set {
+    name  = "controller.resources.requests.memory"
+    value = "200Mi"
   }
   
   # Wait long enough for the load balancer to be fully provisioned

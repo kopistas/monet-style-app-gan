@@ -431,6 +431,10 @@ jobs:
             # Remove the temporary file for security
             rm /tmp/auth
             
+            # Apply the MLflow certificate
+            echo "Applying MLflow certificate..."
+            envsubst < kubernetes/mlflow/certificate.yaml | kubectl apply -f -
+            
             # Apply MLflow manifests
             envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
             
@@ -478,6 +482,10 @@ jobs:
           # Apply secrets and configmaps
           envsubst < kubernetes/web-app/spaces-secret.yaml | kubectl apply -f -
           
+          # Apply certificate resource first to give it more time to be processed
+          echo "Applying web app certificate..."
+          envsubst < kubernetes/cert-manager/certificate.yaml | kubectl apply -f -
+          
           # Apply Web App manifests
           envsubst < kubernetes/web-app/deployment.yaml | kubectl apply -f -
           
@@ -494,7 +502,7 @@ jobs:
           
           # Wait for the certificate to be issued
           echo "Checking certificate status..."
-          for i in {1..3}; do
+          for i in {1..10}; do  # Increase retry attempts
             echo "Attempt $i to check certificate status..."
             kubectl get certificate -n monet-app monet-web-app-tls -o wide || true
             
@@ -508,8 +516,39 @@ jobs:
             echo "Checking cert-manager controller logs for issues..."
             kubectl logs -n cert-manager -l app=cert-manager -c cert-manager --tail=20 || true
             
-            echo "Waiting for certificate to be issued (attempt $i/3)..."
-            sleep 10
+            # Check orders and challenges status
+            echo "Checking ACME orders..."
+            kubectl get orders.acme.cert-manager.io --all-namespaces || true
+            
+            echo "Checking ACME challenges..."
+            kubectl get challenges.acme.cert-manager.io --all-namespaces || true
+            
+            # Check ACME solver pods
+            echo "Checking ACME solver pods..."
+            SOLVER_PODS=$(kubectl get pods --all-namespaces -l acme.cert-manager.io/http01-solver=true -o name)
+            for pod in $SOLVER_PODS; do
+              echo "Logs for $pod:"
+              kubectl logs $pod --tail=20 || true
+            done
+            
+            # Check ingress for challenges
+            echo "ACME challenge ingress resources:"
+            kubectl get ingress --all-namespaces -l acme.cert-manager.io/http01-solver=true || true
+            
+            # Attempt to manually curl challenge paths
+            echo "Checking if challenges are reachable from the worker..."
+            CHALLENGE_PATHS=$(kubectl get ingress --all-namespaces -l acme.cert-manager.io/http01-solver=true -o jsonpath='{range .items[*]}{range .spec.rules[*]}{range .http.paths[*]}{.path}{"\n"}{end}{end}{end}' 2>/dev/null || echo "")
+            LOAD_BALANCER_IP=$(kubectl get svc -n ingress-nginx nginx-ingress-ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            
+            if [[ -n "$CHALLENGE_PATHS" && -n "$LOAD_BALANCER_IP" ]]; then
+              for path in $CHALLENGE_PATHS; do
+                echo "Checking challenge path: $path"
+                curl -v -k "http://$LOAD_BALANCER_IP$path" || true
+              done
+            fi
+            
+            echo "Waiting for certificate to be issued (attempt $i/10)..."
+            sleep 30  # Increase sleep to 30 seconds between attempts
           done
           
           # Check Certificate and Ingress status
@@ -542,7 +581,29 @@ jobs:
           
           echo "Current ingresses:"
           kubectl get ingresses --all-namespaces || true
-
+          
+          # Attempt to patch the nginx-ingress controller to disable PROXY protocol for challenge paths
+          echo "Patching NGINX ingress controller configuration to disable PROXY protocol for ACME challenges..."
+          NGINX_CONFIGMAP_EXISTS=$(kubectl get configmap -n ingress-nginx ingress-nginx-controller 2>/dev/null || echo "")
+          
+          if [[ -n "$NGINX_CONFIGMAP_EXISTS" ]]; then
+            echo "Patching NGINX ConfigMap to disable PROXY protocol for ACME challenges"
+            kubectl patch configmap -n ingress-nginx ingress-nginx-controller --type=merge -p '{"data":{"use-proxy-protocol":"false"}}' || true
+            
+            # Restart NGINX ingress controller to apply new config
+            kubectl rollout restart deployment -n ingress-nginx nginx-ingress-ingress-nginx-controller || true
+          else
+            echo "NGINX ConfigMap not found - creating config with PROXY protocol disabled for ACME challenges"
+            cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: ingress-nginx-controller
+            namespace: ingress-nginx
+          data:
+            use-proxy-protocol: "false"
+          EOF
+          fi
 
       - name: Upload Model to S3
         env:
@@ -578,7 +639,8 @@ jobs:
         timeout-minutes: 15
         run: |
           echo "Waiting for services to initialize..."
-          sleep 60
+          # Increase waiting time to 3 minutes to give cert-manager more time to complete challenges
+          sleep 180
           
           echo "Installing required packages for verification..."
           pip install requests urllib3
