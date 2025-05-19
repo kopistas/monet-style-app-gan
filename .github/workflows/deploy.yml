@@ -421,6 +421,16 @@ jobs:
 
             kubectl get storageclass
             
+            # Create a basic auth secret for MLflow
+            echo "Creating basic auth secret for MLflow..."
+            # Generate htpasswd file with credentials from GitHub secrets
+            htpasswd -bc /tmp/auth ${{ secrets.MLFLOW_USERNAME || 'mlflow-user' }} ${{ secrets.MLFLOW_PASSWORD || 'mlflow-password' }}
+            # Create the secret in the MLflow namespace
+            kubectl create namespace mlflow --dry-run=client -o yaml | kubectl apply -f -
+            kubectl create secret generic basic-auth --from-file=/tmp/auth -n mlflow --dry-run=client -o yaml | kubectl apply -f -
+            # Remove the temporary file for security
+            rm /tmp/auth
+            
             # Apply MLflow manifests
             envsubst < kubernetes/mlflow/deployment.yaml | kubectl apply -f -
             
@@ -484,7 +494,7 @@ jobs:
           
           # Wait for the certificate to be issued
           echo "Checking certificate status..."
-          for i in {1..10}; do
+          for i in {1..3}; do
             echo "Attempt $i to check certificate status..."
             kubectl get certificate -n monet-app monet-web-app-tls -o wide || true
             
@@ -498,8 +508,8 @@ jobs:
             echo "Checking cert-manager controller logs for issues..."
             kubectl logs -n cert-manager -l app=cert-manager -c cert-manager --tail=20 || true
             
-            echo "Waiting for certificate to be issued (attempt $i/10)..."
-            sleep 30
+            echo "Waiting for certificate to be issued (attempt $i/3)..."
+            sleep 10
           done
           
           # Check Certificate and Ingress status
@@ -533,34 +543,6 @@ jobs:
           echo "Current ingresses:"
           kubectl get ingresses --all-namespaces || true
 
-      - name: Force Certificate Renewal if Not Ready
-        run: |
-          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
-
-          CERT_STATUS=$(kubectl get certificate -n monet-app monet-web-app-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-          if [[ "$CERT_STATUS" != "True" ]]; then
-            echo "Certificate still not ready; forcing renewal..."
-
-            # Clean up any previous ACME challenges, orders and requests linked to this certificate
-            kubectl delete challenge,order -n monet-app -l acme.cert-manager.io/certificate-name=monet-web-app-tls --ignore-not-found
-            kubectl delete certificaterequest -n monet-app -l acme.cert-manager.io/certificate-name=monet-web-app-tls --ignore-not-found
-
-            # Trigger a fresh issuance
-            kubectl annotate certificate -n monet-app monet-web-app-tls cert-manager.io/trigger-issuance=now --overwrite
-
-            echo "Renewal triggered. Waiting for cert-manager to process..."
-            for i in {1..20}; do
-              NEW_STATUS=$(kubectl get certificate -n monet-app monet-web-app-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-              if [[ "$NEW_STATUS" == "True" ]]; then
-                echo "Certificate is now Ready!"
-                break
-              fi
-              echo "Still waiting for certificate readiness (attempt $i/20)..."
-              sleep 30
-            done
-          else
-            echo "Certificate already Ready; no action needed."
-          fi
 
       - name: Upload Model to S3
         env:
@@ -623,30 +605,30 @@ jobs:
             echo "- MLflow: https://${{ env.MLFLOW_DOMAIN }}"
           fi
 
-      - name: Debug Web App CrashLoopBackOff
-        run: |
-          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+      # - name: Debug Web App CrashLoopBackOff
+      #   run: |
+      #     export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
           
-          echo "Checking web app logs to diagnose crash:"
-          POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+      #     echo "Checking web app logs to diagnose crash:"
+      #     POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
           
-          if [ -z "$POD_NAME" ]; then
-            echo "No running web app pod found, trying to get logs from any state pod..."
-            POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-          fi
+      #     if [ -z "$POD_NAME" ]; then
+      #       echo "No running web app pod found, trying to get logs from any state pod..."
+      #       POD_NAME=$(kubectl get pods -n monet-app -l app=monet-web-app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+      #     fi
           
-          if [ -n "$POD_NAME" ]; then
-            echo "Getting logs for pod $POD_NAME:"
-            kubectl logs -n monet-app $POD_NAME --previous || kubectl logs -n monet-app $POD_NAME || echo "No logs available"
+      #     if [ -n "$POD_NAME" ]; then
+      #       echo "Getting logs for pod $POD_NAME:"
+      #       kubectl logs -n monet-app $POD_NAME --previous || kubectl logs -n monet-app $POD_NAME || echo "No logs available"
             
-            echo "Checking pod details:"
-            kubectl describe pod -n monet-app $POD_NAME || echo "Could not describe pod"
-          else
-            echo "No web app pods found"
-          fi
+      #       echo "Checking pod details:"
+      #       kubectl describe pod -n monet-app $POD_NAME || echo "Could not describe pod"
+      #     else
+      #       echo "No web app pods found"
+      #     fi
           
-          echo "Checking persistent volume claim status:"
-          kubectl get pvc -n monet-app || echo "No PVCs found"
+      #     echo "Checking persistent volume claim status:"
+      #     kubectl get pvc -n monet-app || echo "No PVCs found"
           
-          echo "Checking if model storage is working:"
-          kubectl describe pvc -n monet-app models-storage || echo "Could not describe PVC" 
+      #     echo "Checking if model storage is working:"
+      #     kubectl describe pvc -n monet-app models-storage || echo "Could not describe PVC" 
