@@ -508,6 +508,35 @@ jobs:
           echo "Current ingresses:"
           kubectl get ingresses --all-namespaces || true
 
+      - name: Force Certificate Renewal if Not Ready
+        run: |
+          export KUBECONFIG=${{ github.workspace }}/.kube/kubeconfig.yaml
+
+          CERT_STATUS=$(kubectl get certificate -n monet-app monet-web-app-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+          if [[ "$CERT_STATUS" != "True" ]]; then
+            echo "Certificate still not ready; forcing renewal..."
+
+            # Clean up any previous ACME challenges, orders and requests linked to this certificate
+            kubectl delete challenge,order -n monet-app -l acme.cert-manager.io/certificate-name=monet-web-app-tls --ignore-not-found
+            kubectl delete certificaterequest -n monet-app -l acme.cert-manager.io/certificate-name=monet-web-app-tls --ignore-not-found
+
+            # Trigger a fresh issuance
+            kubectl annotate certificate -n monet-app monet-web-app-tls cert-manager.io/trigger-issuance=now --overwrite
+
+            echo "Renewal triggered. Waiting for cert-manager to process..."
+            for i in {1..20}; do
+              NEW_STATUS=$(kubectl get certificate -n monet-app monet-web-app-tls -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+              if [[ "$NEW_STATUS" == "True" ]]; then
+                echo "Certificate is now Ready!"
+                break
+              fi
+              echo "Still waiting for certificate readiness (attempt $i/20)..."
+              sleep 30
+            done
+          else
+            echo "Certificate already Ready; no action needed."
+          fi
+
       - name: Upload Model to S3
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
