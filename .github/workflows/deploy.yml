@@ -613,35 +613,20 @@ jobs:
           EOF
           fi
 
-      - name: Upload Model to S3
+      - name: Upload and Register Base Model in MLflow
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.DO_SPACES_ACCESS_KEY }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.DO_SPACES_SECRET_KEY }}
           AWS_REGION: ${{ secrets.DO_SPACES_REGION }}
-          S3_ENDPOINT: "https://${{ secrets.DO_SPACES_REGION }}.digitaloceanspaces.com"
-          BUCKET_NAME: ${{ secrets.DO_SPACES_NAME }}
+          MLFLOW_S3_ENDPOINT_URL: "https://${{ secrets.DO_SPACES_REGION }}.digitaloceanspaces.com"
+          MLFLOW_TRACKING_URI: "https://${{ secrets.MLFLOW_DOMAIN }}"
+          MLFLOW_USERNAME: ${{ secrets.MLFLOW_USERNAME }}
+          MLFLOW_PASSWORD: ${{ secrets.MLFLOW_PASSWORD }}
         run: |
           pip install boto3 mlflow
-          
-          echo "Using S3 endpoint: $S3_ENDPOINT"
-          echo "Using bucket name: $BUCKET_NAME"
-          
-          # Check if we can access the bucket and list objects
-          echo "Checking if we can access the bucket and list objects..."
-          pip install awscli
-          aws --endpoint-url=$S3_ENDPOINT s3 ls s3://$BUCKET_NAME/ || echo "Failed to list bucket contents"
-          
-          # Check if model file already exists
-          if aws --endpoint-url=$S3_ENDPOINT s3 ls s3://$BUCKET_NAME/photo2monet_cyclegan_mark4.pt; then
-            echo "Model file already exists in bucket, skipping upload"
-          else
-            echo "Model file not found in bucket, uploading..."
-            # Use the model promotion script to upload and mark as production
-            python scripts/promote_model.py photo2monet_cyclegan_mark4.pt \
-              --bucket $BUCKET_NAME \
-              --version "$(date +%Y%m%d%H%M%S)" \
-              --model-name "monet-style-transfer"
-          fi
+          python scripts/upload_base_model.py photo2monet_cyclegan_mark4.pt \
+            --model-name style_transfer_photo2monet_cyclegan \
+            --aliases base prod
 
       - name: Wait and Verify Deployment
         timeout-minutes: 15
