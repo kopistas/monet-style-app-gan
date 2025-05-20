@@ -10,6 +10,7 @@ import torch
 import zipfile
 from pathlib import Path
 from dotenv import load_dotenv
+import mlflow
 
 # ---- Load environment variables ----
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
@@ -25,8 +26,8 @@ MODELS_ROOT = "training/models"
 EXP_NAME = "photo2monet_cyclegan"
 CROP_SIZE = 256
 BATCH_SIZE = 1
-EPOCHS = 2
-EPOCHS_DECAY = 2
+EPOCHS = 1
+EPOCHS_DECAY = 0
 
 USE_MLFLOW = True
 MLFLOW_TRACKING_URI = os.environ.get('MLFLOW_TRACKING_URI')
@@ -147,7 +148,10 @@ def train_cyclegan():
         "--batch_size", str(BATCH_SIZE),
         "--gpu_ids", gpu_ids,
         "--checkpoints_dir", MODELS_ROOT,
-        "--save_epoch_freq", "10",
+        "--save_epoch_freq", "1",  # Save every epoch
+        "--save_latest_freq", "500",  # Save more frequently
+        "--display_freq", "100",  # Display more frequently 
+        "--print_freq", "100",  # Print more frequently
         "--display_id", "-1"  # Disable visdom display
     ]
     
@@ -186,7 +190,7 @@ def train_cyclegan():
 
 # ---- EXPORT MODEL ----
 def export_model():
-    """Export the trained model to TorchScript format."""
+    """Export the trained model to TorchScript format and log to MLflow."""
     print("Exporting model to TorchScript...")
     
     try:
@@ -233,6 +237,67 @@ def export_model():
         out_pt = os.path.join(MODELS_ROOT, f"{EXP_NAME}.pt")
         ts.save(out_pt)
         print(f"TorchScript saved to {out_pt}")
+        
+        # Log the model to MLflow if enabled
+        if USE_MLFLOW:
+            # Setup MLflow
+            if MLFLOW_USERNAME and MLFLOW_PASSWORD:
+                os.environ['MLFLOW_TRACKING_USERNAME'] = MLFLOW_USERNAME
+                os.environ['MLFLOW_TRACKING_PASSWORD'] = MLFLOW_PASSWORD
+            
+            mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+            mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+            
+            # Find the active run or create a new one
+            active_run = mlflow.active_run()
+            if active_run is None:
+                run = mlflow.start_run(run_name=EXP_NAME)
+            else:
+                run = active_run
+                
+            try:
+                # Log the model
+                print(f"Logging TorchScript model to MLflow as artifact: {out_pt}")
+                mlflow.log_artifact(out_pt, artifact_path="models")
+                
+                # Log additional metadata about the model
+                mlflow.set_tag("model_type", "torchscript")
+                mlflow.set_tag("input_size", f"{CROP_SIZE}x{CROP_SIZE}")
+                mlflow.set_tag("checkpoint_source", os.path.basename(ckpt_path))
+                
+                # Register the model in MLflow Model Registry
+                print("Registering model in MLflow Model Registry...")
+                model_uri = f"runs:/{run.info.run_id}/models/{EXP_NAME}.pt"
+                registered_model_name = f"style_transfer_{EXP_NAME}"
+                
+                try:
+                    registered_model = mlflow.register_model(
+                        model_uri=model_uri,
+                        name=registered_model_name
+                    )
+                    print(f"Model registered with name: {registered_model_name}, version: {registered_model.version}")
+                    
+                    # Add model description
+                    client = mlflow.tracking.MlflowClient()
+                    client.update_registered_model(
+                        name=registered_model_name,
+                        description=f"Monet style transfer model (CycleGAN) trained with {EPOCHS} epochs."
+                    )
+                    
+                    # Optional: transition to Production if this is a production model
+                    # client.transition_model_version_stage(
+                    #     name=registered_model_name,
+                    #     version=registered_model.version,
+                    #     stage="Production"
+                    # )
+                except Exception as reg_error:
+                    print(f"Error registering model: {reg_error}")
+                
+                print(f"Model successfully logged to MLflow run: {run.info.run_id}")
+            finally:
+                # End the run if we started one
+                if active_run is None:
+                    mlflow.end_run()
         
     except Exception as e:
         print(f"Error exporting model: {e}")
