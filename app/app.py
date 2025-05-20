@@ -20,6 +20,15 @@ import random
 import boto3
 from botocore.exceptions import ClientError
 
+# Import MLflow for model management
+try:
+    import mlflow
+    import mlflow.artifacts
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    logging.warning("MLflow not installed. Model downloading from MLflow will not be available.")
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -281,6 +290,157 @@ def get_s3_client():
         logger.error(f"Error creating S3 client: {e}")
         return None
 
+def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"):
+    """Download model from MLflow with fallback to base alias and direct S3 if needed"""
+    global model_download_progress
+    
+    if not MLFLOW_AVAILABLE:
+        error_msg = "MLflow not installed, cannot download model"
+        logger.error(error_msg)
+        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        return False
+    
+    try:
+        # Configuration
+        registered_model_name = os.getenv("MLFLOW_MODEL_NAME", "style_transfer_photo2monet_cyclegan")
+        artifact_name = os.getenv("MLFLOW_ARTIFACT_NAME", "photo2monet_cyclegan.pt")
+        
+        # MLflow configuration
+        mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+        mlflow_username = os.getenv("MLFLOW_USERNAME")
+        mlflow_password = os.getenv("MLFLOW_PASSWORD")
+        
+        if not mlflow_tracking_uri:
+            error_msg = "MLFLOW_TRACKING_URI environment variable not set"
+            logger.error(error_msg)
+            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            return False
+        
+        # Set initial progress
+        model_download_progress = {
+            "status": "preparing", 
+            "progress": 0, 
+            "message": f"Preparing to download model from MLflow (alias: {alias})"
+        }
+        
+        # Auth if needed
+        if mlflow_username and mlflow_password:
+            os.environ["MLFLOW_TRACKING_USERNAME"] = mlflow_username
+            os.environ["MLFLOW_TRACKING_PASSWORD"] = mlflow_password
+        
+        logger.info(f"Connecting to MLflow at {mlflow_tracking_uri}")
+        mlflow.set_tracking_uri(mlflow_tracking_uri)
+        client = mlflow.tracking.MlflowClient()
+        
+        # Function to attempt download with specific alias
+        def try_download_with_alias(current_alias):
+            try:
+                logger.info(f"Fetching model version with alias: {current_alias}")
+                version = client.get_model_version_by_alias(registered_model_name, current_alias)
+                run_id = version.run_id
+                artifact_uri = f"runs:/{run_id}/models/{artifact_name}"
+                
+                logger.info(f"Trying MLflow artifact fetch from: {artifact_uri}")
+                model_download_progress = {
+                    "status": "downloading", 
+                    "progress": 20, 
+                    "message": f"Downloading model from MLflow (run_id: {run_id})"
+                }
+                
+                try:
+                    downloaded_path = mlflow.artifacts.download_artifacts(artifact_uri)
+                    logger.info(f"Downloaded via MLflow to: {downloaded_path}")
+                    
+                    # Ensure directory exists
+                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                    
+                    # Copy to final location if needed
+                    import shutil
+                    shutil.copy(downloaded_path, local_path)
+                    logger.info(f"Copied model to: {local_path}")
+                    
+                    model_download_progress = {
+                        "status": "completed", 
+                        "progress": 100, 
+                        "message": f"Download complete using {current_alias} alias"
+                    }
+                    return True
+                
+                except Exception as e:
+                    logger.warning(f"MLflow download failed: {e}")
+                    logger.info("Attempting direct S3 fallback...")
+                    
+                    # Step 1: Get full artifact URI for the run
+                    run = client.get_run(run_id)
+                    base_uri = run.info.artifact_uri
+                    logger.info(f"Run artifact base URI: {base_uri}")
+                    
+                    # Step 2: Parse and build full path
+                    parsed = urllib.parse.urlparse(base_uri)
+                    bucket = parsed.netloc
+                    prefix = parsed.path.lstrip("/")
+                    full_key = f"{prefix}/models/{artifact_name}"
+                    logger.info(f"S3 URI: s3://{bucket}/{full_key}")
+                    
+                    # Step 3: Download using boto3
+                    s3_endpoint = os.getenv('MLFLOW_S3_ENDPOINT_URL', os.getenv('S3_ENDPOINT'))
+                    
+                    session = boto3.session.Session()
+                    s3 = session.client(
+                        service_name="s3",
+                        endpoint_url=s3_endpoint,
+                        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+                        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+                    )
+                    
+                    try:
+                        logger.info(f"Downloading from S3: {bucket}/{full_key} to {local_path}")
+                        model_download_progress = {
+                            "status": "downloading", 
+                            "progress": 30, 
+                            "message": f"Downloading model via S3 fallback"
+                        }
+                        
+                        s3.download_file(bucket, full_key, local_path)
+                        logger.info(f"Downloaded via S3 to: {local_path}")
+                        
+                        model_download_progress = {
+                            "status": "completed", 
+                            "progress": 100, 
+                            "message": f"Download complete via S3 fallback for {current_alias} alias"
+                        }
+                        return True
+                    
+                    except Exception as s3e:
+                        logger.error(f"Could not download model from S3: {s3e}")
+                        return False
+            
+            except Exception as alias_error:
+                logger.warning(f"Could not find model with alias {current_alias}: {alias_error}")
+                return False
+            
+        # Try with primary alias
+        if try_download_with_alias(alias):
+            return True
+            
+        # Try with fallback alias if primary failed
+        logger.info(f"Trying fallback alias: {fallback_alias}")
+        if try_download_with_alias(fallback_alias):
+            return True
+            
+        # If we get here, both aliases failed
+        error_msg = f"Could not download model with any alias (tried: {alias}, {fallback_alias})"
+        logger.error(error_msg)
+        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        return False
+        
+    except Exception as e:
+        error_msg = f"Error in MLflow download process: {e}"
+        logger.error(error_msg)
+        logger.error(traceback.format_exc())
+        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        return False
+
 def get_production_model_info():
     """Get information about the current production model from S3"""
     try:
@@ -399,7 +559,7 @@ def download_model_from_s3(model_key, local_path):
         return False
 
 def check_and_update_model():
-    """Check if a new production model is available and download it if needed"""
+    """Check if a new model is available from MLflow or S3 and download it if needed"""
     global MODEL_PATH, last_model_check_time, model_download_progress
     
     # Don't check too frequently
@@ -409,24 +569,54 @@ def check_and_update_model():
         
     last_model_check_time = current_time
     
-    # Skip check if S3 not configured
+    # Create local path for downloaded model
+    models_dir = os.path.join(os.getcwd(), "models")
+    os.makedirs(models_dir, exist_ok=True)
+    
+    # First try MLflow if configured
+    if MLFLOW_AVAILABLE and os.getenv("MLFLOW_TRACKING_URI"):
+        logger.info("Checking for model updates from MLflow")
+        
+        # Extract model filename from MLflow configuration
+        artifact_name = os.getenv("MLFLOW_ARTIFACT_NAME", "photo2monet_cyclegan.pt")
+        local_model_path = os.path.join(models_dir, artifact_name)
+        
+        # Check if we're already using the latest MLflow model
+        current_model_name = os.path.basename(MODEL_PATH)
+        if current_model_name == artifact_name and os.path.exists(MODEL_PATH):
+            logger.info(f"Already using MLflow model: {artifact_name}")
+        else:
+            logger.info(f"Attempting to download model from MLflow")
+            
+            # Try prod alias first, fall back to base
+            if download_model_from_mlflow(local_model_path, alias="prod", fallback_alias="base"):
+                logger.info(f"Downloaded new model from MLflow to {local_model_path}")
+                # Update model path to use the new model
+                MODEL_PATH = local_model_path
+                
+                # Unload the current model if it's loaded
+                unload_model()
+                
+                return True
+            else:
+                logger.warning("Failed to download model from MLflow, will try S3 fallback")
+    else:
+        logger.info("MLflow not configured, skipping MLflow model check")
+    
+    # Fall back to S3 if MLflow failed or isn't configured
     if not S3_BUCKET:
-        logger.info("S3 not configured, skipping model check")
+        logger.warning("S3_BUCKET environment variable not set, skipping model check")
         return False
     
-    # Get current production model info
+    # Get current production model info from S3
     production_info = get_production_model_info()
     
     if not production_info or 'model_key' not in production_info:
-        logger.warning("No production model information available")
+        logger.warning("No production model information available from S3")
         return False
         
     production_model_key = production_info['model_key']
     model_version = production_info.get('version', 'unknown')
-    
-    # Create local path for downloaded model
-    models_dir = os.path.join(os.getcwd(), "models")
-    os.makedirs(models_dir, exist_ok=True)
     
     # Extract model filename from S3 key
     model_filename = os.path.basename(production_model_key)
@@ -436,22 +626,22 @@ def check_and_update_model():
     current_model_name = os.path.basename(MODEL_PATH)
     
     if current_model_name == model_filename and os.path.exists(MODEL_PATH):
-        logger.info(f"Already using the latest production model: {model_filename}")
+        logger.info(f"Already using the latest production model from S3: {model_filename}")
         return False
         
-    logger.info(f"New production model available: {production_model_key} (version: {model_version})")
+    logger.info(f"New production model available from S3: {production_model_key} (version: {model_version})")
     logger.info(f"Current model: {MODEL_PATH}, new model will be: {local_model_path}")
     
     # Download the new model
     model_download_progress = {
         "status": "preparing", 
         "progress": 0, 
-        "message": f"Preparing to download new model (version: {model_version})"
+        "message": f"Preparing to download new model from S3 (version: {model_version})"
     }
     
     # Download the model (this will update the progress)
     if download_model_from_s3(production_model_key, local_model_path):
-        logger.info(f"Downloaded new model to {local_model_path}")
+        logger.info(f"Downloaded new model from S3 to {local_model_path}")
         # Update model path to use the new model
         MODEL_PATH = local_model_path
         
@@ -460,7 +650,7 @@ def check_and_update_model():
         
         return True
     else:
-        logger.error("Failed to download new model")
+        logger.error("Failed to download new model from S3")
         return False
 
 def process_image(image: Image.Image):
@@ -713,7 +903,20 @@ def health_check():
 def log_environment_variables():
     """Log all relevant environment variables for debugging"""
     logger.info("=== Environment Variables ===")
-    for var in ['MODEL_PATH', 'S3_BUCKET', 'S3_ENDPOINT', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'UNSPLASH_API_KEY']:
+    for var in [
+        'MODEL_PATH', 
+        'S3_BUCKET', 
+        'S3_ENDPOINT', 
+        'AWS_ACCESS_KEY_ID', 
+        'AWS_SECRET_ACCESS_KEY', 
+        'UNSPLASH_API_KEY',
+        # MLflow variables
+        'MLFLOW_TRACKING_URI',
+        'MLFLOW_USERNAME',
+        'MLFLOW_MODEL_NAME',
+        'MLFLOW_ARTIFACT_NAME',
+        'MLFLOW_S3_ENDPOINT_URL'
+    ]:
         logger.info(f"{var}: {'Set' if os.getenv(var) else 'Not set'}")
     logger.info("============================")
 
@@ -724,4 +927,10 @@ if __name__ == '__main__':
     print(f"Сервер доступен на порту 5080. Откройте http://localhost:5080 в браузере")
     logger.info(f"Сервер запускается на порту 5080")
     log_environment_variables()
+    
+    # Check for model updates on startup
+    if MLFLOW_AVAILABLE and os.getenv("MLFLOW_TRACKING_URI"):
+        logger.info("MLflow is configured, checking for model updates on startup")
+        threading.Thread(target=check_and_update_model, daemon=True).start()
+    
     app.run(host='0.0.0.0', port=5080)
