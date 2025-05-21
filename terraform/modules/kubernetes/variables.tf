@@ -36,6 +36,18 @@ variable "unsplash_api_key" {
   default = ""
 }
 
+variable "mlflow_username" {
+  description = "Username for MLflow authentication"
+  default = ""
+  sensitive = true
+}
+
+variable "mlflow_password" {
+  description = "Password for MLflow authentication"
+  default = ""
+  sensitive = true
+}
+
 variable "deploy_mlflow" {
   description = "Whether to deploy MLflow"
   default = true

@@ -93,6 +93,8 @@ module "kubernetes_resources" {
   email_for_ssl = var.email_for_ssl
   unsplash_api_key = var.unsplash_api_key
   deploy_mlflow = var.deploy_mlflow
+  mlflow_username = var.mlflow_username
+  mlflow_password = var.mlflow_password
 }
 
 # Variables
@@ -164,6 +166,20 @@ variable "email_for_ssl" {
 
 variable "unsplash_api_key" {
   description = "Unsplash API key for image search"
+  default = ""
+  sensitive = true
+  type      = string
+}
+
+variable "mlflow_username" {
+  description = "Username for MLflow authentication"
+  default = ""
+  sensitive = true
+  type      = string
+}
+
+variable "mlflow_password" {
+  description = "Password for MLflow authentication"
   default = ""
   sensitive = true
   type      = string

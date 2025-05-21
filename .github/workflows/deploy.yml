@@ -52,6 +52,8 @@ jobs:
           TF_VAR_use_do_dns: ${{ secrets.USE_DO_DNS || 'false' }}
           TF_VAR_deploy_mlflow: ${{ secrets.DEPLOY_MLFLOW || 'false' }}
           TF_VAR_load_balancer_ip: ${{ secrets.LOAD_BALANCER_IP || '' }}
+          TF_VAR_mlflow_username: ${{ secrets.MLFLOW_USERNAME || '' }}
+          TF_VAR_mlflow_password: ${{ secrets.MLFLOW_PASSWORD || '' }}
         run: terraform plan -out=tfplan
 
       - name: Terraform Apply
@@ -67,6 +69,8 @@ jobs:
           TF_VAR_mlflow_domain: ${{ secrets.MLFLOW_DOMAIN }}
           TF_VAR_deploy_mlflow: ${{ secrets.DEPLOY_MLFLOW || 'false' }}
           TF_VAR_load_balancer_ip: ${{ secrets.LOAD_BALANCER_IP || '' }}
+          TF_VAR_mlflow_username: ${{ secrets.MLFLOW_USERNAME || '' }}
+          TF_VAR_mlflow_password: ${{ secrets.MLFLOW_PASSWORD || '' }}
         run: terraform apply -auto-approve tfplan
 
       - name: Save Terraform Output and Update for Next Run
@@ -281,6 +285,8 @@ jobs:
           echo "UNSPLASH_API_KEY_BASE64=$(echo -n '${{ secrets.UNSPLASH_API_KEY || '' }}' | base64)" >> $GITHUB_ENV
           echo "DO_SPACES_ACCESS_KEY_BASE64=$(echo -n '${{ secrets.DO_SPACES_ACCESS_KEY }}' | base64)" >> $GITHUB_ENV
           echo "DO_SPACES_SECRET_KEY_BASE64=$(echo -n '${{ secrets.DO_SPACES_SECRET_KEY }}' | base64)" >> $GITHUB_ENV
+          echo "MLFLOW_USERNAME_BASE64=$(echo -n '${{ secrets.MLFLOW_USERNAME || '' }}' | base64)" >> $GITHUB_ENV
+          echo "MLFLOW_PASSWORD_BASE64=$(echo -n '${{ secrets.MLFLOW_PASSWORD || '' }}' | base64)" >> $GITHUB_ENV
           
           # Set DNS configuration 
           if [ -z "$DNS_CONFIG" ]; then
