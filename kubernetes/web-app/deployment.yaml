@@ -7,6 +7,8 @@ metadata:
     app: monet-web-app
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: monet-web-app
