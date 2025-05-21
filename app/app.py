@@ -86,8 +86,8 @@ logger.info(f"Using device: {DEVICE}")
 gen = None
 model_loading = False
 model_load_error = None  # Track any model loading errors
-model_download_progress = {"status": "idle", "progress": 0, "message": ""}
-inference_progress = {"status": "idle", "progress": 0, "message": ""}
+model_download_progress = {"status": "idle", "message": ""}
+inference_progress = {"status": "idle", "message": ""}
 last_model_check_time = 0
 
 # Set up transforms
@@ -158,7 +158,7 @@ def load_model():
         return False
     
     model_loading = True
-    inference_progress = {"status": "loading", "progress": 0, "message": "Loading model into memory"}
+    inference_progress = {"status": "loading", "message": "Loading model into memory"}
     logger.info(f"Loading model from {MODEL_PATH}")
     
     try:
@@ -188,19 +188,19 @@ def load_model():
             if os.path.exists('/app'):
                 logger.info(f"Files in /app: {os.listdir('/app')}")
             model_loading = False
-            inference_progress = {"status": "error", "progress": 0, "message": "Model file not found. Please check your configuration."}
+            inference_progress = {"status": "error", "message": "Model file not found. Please check your configuration."}
             return False
         
         # Load the model
         gen = torch.jit.load(model_file, map_location=DEVICE).eval()
         logger.info(f"Model loaded successfully from {model_file}")
         model_loading = False
-        inference_progress = {"status": "idle", "progress": 30, "message": "Model loaded successfully"}
+        inference_progress = {"status": "idle", "message": "Model loaded successfully"}
         return True
     except Exception as e:
         logger.error(f"Error loading model: {e}")
         model_loading = False
-        inference_progress = {"status": "error", "progress": 0, "message": f"Error loading model: {e}"}
+        inference_progress = {"status": "error", "message": f"Error loading model: {e}"}
         return False
 
 def unload_model():
@@ -297,7 +297,7 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
     if not MLFLOW_AVAILABLE:
         error_msg = "MLflow not installed, cannot download model"
         logger.error(error_msg)
-        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        model_download_progress = {"status": "error", "message": error_msg}
         return False
     
     try:
@@ -313,13 +313,12 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
         if not mlflow_tracking_uri:
             error_msg = "MLFLOW_TRACKING_URI environment variable not set"
             logger.error(error_msg)
-            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            model_download_progress = {"status": "error", "message": error_msg}
             return False
         
         # Set initial progress
         model_download_progress = {
             "status": "preparing", 
-            "progress": 0, 
             "message": f"Preparing to download model from MLflow (alias: {alias})"
         }
         
@@ -343,7 +342,6 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
                 logger.info(f"Trying MLflow artifact fetch from: {artifact_uri}")
                 model_download_progress = {
                     "status": "downloading", 
-                    "progress": 20, 
                     "message": f"Downloading model from MLflow (run_id: {run_id})"
                 }
                 
@@ -361,7 +359,6 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
                     
                     model_download_progress = {
                         "status": "completed", 
-                        "progress": 100, 
                         "message": f"Download complete using {current_alias} alias"
                     }
                     return True
@@ -397,7 +394,6 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
                         logger.info(f"Downloading from S3: {bucket}/{full_key} to {local_path}")
                         model_download_progress = {
                             "status": "downloading", 
-                            "progress": 30, 
                             "message": f"Downloading model via S3 fallback"
                         }
                         
@@ -406,7 +402,6 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
                         
                         model_download_progress = {
                             "status": "completed", 
-                            "progress": 100, 
                             "message": f"Download complete via S3 fallback for {current_alias} alias"
                         }
                         return True
@@ -431,14 +426,14 @@ def download_model_from_mlflow(local_path, alias="prod", fallback_alias="latest"
         # If we get here, both aliases failed
         error_msg = f"Could not download model with any alias (tried: {alias}, {fallback_alias})"
         logger.error(error_msg)
-        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        model_download_progress = {"status": "error", "message": error_msg}
         return False
         
     except Exception as e:
         error_msg = f"Error in MLflow download process: {e}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        model_download_progress = {"status": "error", "message": error_msg}
         return False
 
 def get_production_model_info():
@@ -482,64 +477,42 @@ def download_model_from_s3(model_key, local_path):
         if not S3_BUCKET:
             error_msg = "S3_BUCKET environment variable not set"
             logger.error(error_msg)
-            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            model_download_progress = {"status": "error", "message": error_msg}
             return False
 
         s3_client = get_s3_client()
         if not s3_client:
             error_msg = "Could not create S3 client"
             logger.error(error_msg)
-            model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+            model_download_progress = {"status": "error", "message": error_msg}
             return False
             
-        # Get file size for progress calculation
-        try:
-            response = s3_client.head_object(Bucket=S3_BUCKET, Key=model_key)
-            total_size = response.get('ContentLength', 0)
-        except ClientError as e:
-            logger.error(f"Error getting model file size: {e}")
-            total_size = 0
-        
         # Ensure directory exists
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        
-        # Set up progress tracking
-        downloaded = 0
-        
-        def progress_callback(chunk):
-            nonlocal downloaded
-            downloaded += chunk
-            if total_size > 0:
-                progress = int((downloaded / total_size) * 100)
-                model_download_progress["progress"] = progress
-                model_download_progress["message"] = f"Downloaded {downloaded / (1024*1024):.1f} MB of {total_size / (1024*1024):.1f} MB"
         
         # Update progress status
         model_download_progress = {
             "status": "downloading", 
-            "progress": 0, 
-            "message": f"Starting download of {model_key}"
+            "message": f"Downloading model {model_key}"
         }
         
-        # Custom download with progress
+        # Custom download
         with open(local_path, 'wb') as f:
             logger.info(f"Downloading model from s3://{S3_BUCKET}/{model_key} to {local_path}")
             
             try:
                 s3_object = s3_client.get_object(Bucket=S3_BUCKET, Key=model_key)
                 
-                # Stream the file in chunks to track progress
+                # Stream the file
                 chunk_size = 1024 * 1024  # 1MB chunks
                 while True:
                     chunk = s3_object['Body'].read(chunk_size)
                     if not chunk:
                         break
                     f.write(chunk)
-                    progress_callback(len(chunk))
                 
                 model_download_progress = {
                     "status": "completed", 
-                    "progress": 100, 
                     "message": "Download complete"
                 }
                 logger.info(f"Model download complete: {local_path}")
@@ -548,14 +521,14 @@ def download_model_from_s3(model_key, local_path):
             except ClientError as e:
                 error_msg = f"Error downloading model: {e}"
                 logger.error(error_msg)
-                model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+                model_download_progress = {"status": "error", "message": error_msg}
                 return False
                 
     except Exception as e:
         error_msg = f"Error in download process: {e}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
-        model_download_progress = {"status": "error", "progress": 0, "message": error_msg}
+        model_download_progress = {"status": "error", "message": error_msg}
         return False
 
 def check_and_update_model():
@@ -628,7 +601,6 @@ def check_and_update_model():
     # Download the new model
     model_download_progress = {
         "status": "preparing", 
-        "progress": 0, 
         "message": f"Preparing to download new model from S3 (version: {model_version})"
     }
     
@@ -660,18 +632,18 @@ def process_image(image: Image.Image):
         thread.daemon = True
         thread.start()
     
-    # Set initial progress
-    inference_progress = {"status": "loading", "progress": 0, "message": "Loading model"}
+    # Set initial progress - simplified without progress percentage
+    inference_progress = {"status": "loading", "message": "Loading model"}
 
     # Load model if needed
     if gen is None and not load_model():
         error_message = "Идет загрузка модели... Пожалуйста, повторите запрос через несколько секунд."
-        inference_progress = {"status": "error", "progress": 0, "message": error_message}
+        inference_progress = {"status": "error", "message": error_message}
         return None, error_message
 
     try:
         t0 = time.time()
-        inference_progress = {"status": "processing", "progress": 30, "message": "Preparing image"}
+        inference_progress = {"status": "processing", "message": "Processing image"}
 
         # Check image dimensions to prevent memory issues
         w, h = image.size
@@ -681,21 +653,15 @@ def process_image(image: Image.Image):
             ratio = max_dim / max(w, h)
             new_w, new_h = int(w * ratio), int(h * ratio)
             logger.info(f"Resizing large image from {w}x{h} to {new_w}x{new_h}")
-            inference_progress = {"status": "processing", "progress": 40, "message": "Resizing image"}
             image = image.resize((new_w, new_h), Image.LANCZOS)
-
-        inference_progress = {"status": "processing", "progress": 50, "message": "Applying style transfer"}
         
         if max(image.size) <= 256:                       # small: old path
             tin = prep(image).unsqueeze(0)               # stay on CPU
             with torch.no_grad():
                 tout = gen(tin)[0]
-            inference_progress = {"status": "processing", "progress": 80, "message": "Finalizing result"}
             out_img = T.ToPILImage()(denorm(tout))
         else:                                            # large: tile path
-            inference_progress = {"status": "processing", "progress": 60, "message": "Processing image tiles"}
             out_img = stylize_tiles_cpu(image, tile=256, stride=224)
-            inference_progress = {"status": "processing", "progress": 80, "message": "Finalizing result"}
 
         proc_time = time.time() - t0
 
@@ -707,7 +673,7 @@ def process_image(image: Image.Image):
         # Unload model to free memory
         unload_model()
 
-        inference_progress = {"status": "completed", "progress": 100, "message": "Processing complete"}
+        inference_progress = {"status": "completed", "message": "Processing complete"}
 
         return {
             "original":  base64.b64encode(buf_in.getvalue()).decode(),
@@ -718,7 +684,7 @@ def process_image(image: Image.Image):
     except Exception as e:
         logger.exception("Error processing image")
         error_msg = f"Ошибка при обработке изображения: {e}"
-        inference_progress = {"status": "error", "progress": 0, "message": error_msg}
+        inference_progress = {"status": "error", "message": error_msg}
         
         # Unload model to free memory after error
         unload_model()
@@ -913,6 +879,13 @@ def log_environment_variables():
     ]:
         logger.info(f"{var}: {'Set' if os.getenv(var) else 'Not set'}")
     logger.info("============================")
+
+# Add this error handler for 404 errors to fix the bug in the logs
+@app.errorhandler(404)
+def page_not_found(e):
+    """Handle 404 errors gracefully"""
+    logger.info(f"404 error: {request.path}")
+    return jsonify({"error": "The requested URL was not found"}), 404
 
 if __name__ == '__main__':
     print("Запуск сервера трансформации изображений в стиле Моне...")

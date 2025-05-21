@@ -261,63 +261,19 @@
             -webkit-backdrop-filter: blur(3px);
         }
 
-        .loading i {
-            font-size: 3rem;
-            color: var(--primary-color);
-            background: linear-gradient(45deg, var(--primary-color), var(--primary-light));
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 1rem;
-        }
-        
-        .loading-progress {
-            width: 100%;
-            height: 8px;
-            background-color: #f0f0f0;
-            border-radius: 100px;
-            margin: 1.5rem 0;
-            overflow: hidden;
-            position: relative;
-        }
-        
-        .loading-progress-bar {
-            height: 100%;
-            width: 0%;
-            background: linear-gradient(90deg, var(--primary-light), var(--primary-color));
-            border-radius: 100px;
-            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-        }
-        
-        .loading-progress::after {
-            content: none;
-        }
-        
         .ios-spinner {
-            width: 20px;
-            height: 20px;
-            border: 2px solid rgba(106, 80, 167, 0.2);
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(106, 80, 167, 0.2);
             border-top-color: var(--primary-color);
             border-radius: 50%;
             animation: spinner 0.8s linear infinite;
             display: inline-block;
-            margin-right: 10px;
-            vertical-align: middle;
+            margin-bottom: 20px;
         }
         
         @keyframes spinner {
             to {transform: rotate(360deg);}
-        }
-        
-        .loading-stage {
-            margin-bottom: 1rem;
-            color: var(--primary-color);
-            font-size: 1.2rem;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            transition: none;
         }
         
         .model-download-info {
@@ -355,44 +311,7 @@
             color: #555;
             padding-left: 0.4rem;
         }
-        
-        .model-download-progress {
-            width: 100%;
-            height: 6px;
-            background-color: #e0e0e0;
-            border-radius: 100px;
-            margin: 0.7rem 0;
-            overflow: hidden;
-        }
-        
-        .model-download-progress-bar {
-            height: 100%;
-            width: 0%;
-            background-color: var(--primary-color);
-            border-radius: 100px;
-            transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .loader-text {
-            margin: 1rem 0;
-            font-size: 1.3rem;
-            color: var(--primary-color);
-            font-weight: 500;
-        }
-        
-        .progress-percent {
-            position: absolute;
-            right: 10px;
-            font-size: 0.85rem;
-            color: #555;
-            font-weight: 500;
-        }
-        
         .status-badge {
             display: inline-block;
             padding: 0.2rem 0.6rem;
@@ -544,35 +463,9 @@
 
         <div class="loading-overlay" id="loading-overlay"></div>
         <div class="loading" id="loading">
-            <i class="fas fa-palette"></i>
+            <div class="ios-spinner"></div>
             <p class="loader-text">Преобразование изображения в стиль Моне</p>
-            
-            <div id="model-loading-indicator" style="display: none; margin-bottom: 16px; background-color: rgba(255, 193, 7, 0.1); padding: 12px; border-radius: 12px; border-left: 4px solid #ffc107;">
-                <i class="fas fa-cog fa-spin" style="color: #ffc107; margin-right: 12px;"></i>
-                <span style="color: #856404; font-weight: 500;">Загрузка модели в память...</span>
-            </div>
-            
-            <div class="model-download-info" id="model-download-info">
-                <h4>
-                    <i class="fas fa-cloud-download-alt"></i> 
-                    Загрузка новой модели
-                    <span class="status-badge downloading" id="model-download-status">Загрузка</span>
-                </h4>
-                <p id="model-download-message">Загрузка новейшей версии модели...</p>
-                <div class="model-download-progress">
-                    <div class="model-download-progress-bar" id="model-download-progress-bar"></div>
-                </div>
-                <div class="progress-percent" id="model-download-percent">0%</div>
-            </div>
-            
-            <div class="loading-stage" id="loading-stage">
-                <div class="ios-spinner"></div>
-                <span>Подготовка изображения...</span>
-            </div>
-            <div class="loading-progress">
-                <div class="loading-progress-bar" id="loading-progress-bar"></div>
-            </div>
-            <div class="progress-percent" id="inference-progress-percent">0%</div>
+            <p style="margin-top: 10px; color: #666;">Процесс может занять от 5 до 10 минут</p>
         </div>
 
         <div class="error-container" id="error-container">
@@ -613,11 +506,8 @@
         const originalImg = document.getElementById('original-img');
         const generatedImg = document.getElementById('generated-img');
         const processingTimeEl = document.getElementById('processing-time');
-        const loadingProgressBar = document.getElementById('loading-progress-bar');
-        const loadingStageEl = document.getElementById('loading-stage');
         const modelDownloadInfo = document.getElementById('model-download-info');
         const modelDownloadMessage = document.getElementById('model-download-message');
-        const modelDownloadProgressBar = document.getElementById('model-download-progress-bar');
 
         // Poll for model status initially and periodically during processing
         let modelStatusInterval = null;
@@ -650,9 +540,9 @@
                 .then(data => {
                     currentModelStatus = data.status;
                     
-                    // Check download progress
+                    // Just log model download progress, no UI updates needed
                     if (data.download_progress && data.download_progress.status !== 'idle') {
-                        updateModelDownloadProgress(data.download_progress);
+                        console.log('Model download status:', data.download_progress);
                     }
                 })
                 .catch(error => {
@@ -666,16 +556,14 @@
             fetch('/api/progress')
                 .then(response => response.json())
                 .then(data => {
-                    // Update model download progress
-                    if (data.model_download && data.model_download.status !== 'idle') {
-                        updateModelDownloadProgress(data.model_download);
-                    } else {
-                        modelDownloadInfo.style.display = 'none';
-                    }
-                    
                     // Update inference progress
                     if (data.inference && data.inference.status !== 'idle') {
                         updateInferenceProgress(data.inference);
+                    }
+                    
+                    // Just log model download progress, no UI updates needed
+                    if (data.model_download && data.model_download.status !== 'idle') {
+                        console.log('Model download:', data.model_download);
                     }
                 })
                 .catch(error => {
@@ -683,114 +571,19 @@
                 });
         }
         
-        // Update model download progress UI
-        function updateModelDownloadProgress(progressData) {
-            if (progressData.status === 'idle' || !progressData) {
-                modelDownloadInfo.style.display = 'none';
-                return;
-            }
-            
-            modelDownloadInfo.style.display = 'block';
-            
-            // Update progress bar
-            if (progressData.progress) {
-                const progress = Math.min(Math.max(progressData.progress, 0), 100);
-                modelDownloadProgressBar.style.width = `${progress}%`;
-                
-                // Update percentage text
-                const percentElement = document.getElementById('model-download-percent');
-                percentElement.textContent = `${Math.round(progress)}%`;
-            }
-            
-            // Update message
-            if (progressData.message) {
-                modelDownloadMessage.textContent = progressData.message;
-            }
-            
-            // Update status badge
-            const statusBadge = document.getElementById('model-download-status');
-            if (progressData.status === 'completed') {
-                statusBadge.textContent = 'Завершено';
-                statusBadge.className = 'status-badge completed';
-                
-                // Hide after a delay
-                setTimeout(() => {
-                    modelDownloadInfo.style.display = 'none';
-                }, 3000);
-            } else if (progressData.status === 'error') {
-                statusBadge.textContent = 'Ошибка';
-                statusBadge.className = 'status-badge error';
-            } else {
-                statusBadge.textContent = 'Загрузка';
-                statusBadge.className = 'status-badge downloading';
-            }
-        }
-        
-        // Update inference progress UI
+        // Update inference progress UI - simplified version without progress tracking
         function updateInferenceProgress(progressData) {
             if (progressData.status === 'idle' || !progressData) {
                 return;
             }
             
-            // Update progress bar
-            if (progressData.progress) {
-                const progress = Math.min(Math.max(progressData.progress, 0), 100);
-                loadingProgressBar.style.width = `${progress}%`;
-                
-                // Update percentage text
-                const percentElement = document.getElementById('inference-progress-percent');
-                percentElement.textContent = `${Math.round(progress)}%`;
-            }
+            // No need to update progress bars or percentages anymore
             
-            // Update stage message - NO ANIMATIONS!
-            if (progressData.message) {
-                // Translate messages to Russian
-                let russianMessage = progressData.message;
-                switch(progressData.message) {
-                    case "Loading model into memory":
-                        russianMessage = "Загрузка модели в память";
-                        break;
-                    case "Model loaded successfully":
-                        russianMessage = "Модель успешно загружена";
-                        break;
-                    case "Preparing image":
-                        russianMessage = "Подготовка изображения";
-                        break;
-                    case "Resizing image":
-                        russianMessage = "Изменение размера изображения";
-                        break;
-                    case "Applying style transfer":
-                        russianMessage = "Применение стиля Моне";
-                        break;
-                    case "Processing image tiles":
-                        russianMessage = "Обработка частей изображения";
-                        break;
-                    case "Finalizing result":
-                        russianMessage = "Завершение обработки";
-                        break;
-                    case "Processing complete":
-                        russianMessage = "Обработка завершена";
-                        break;
-                    default:
-                        // Keep original message if no translation found
-                        break;
-                }
-                
-                // Directly update, NO FADING!
-                const spanElement = loadingStageEl.querySelector('span');
-                if (spanElement) {
-                    spanElement.textContent = russianMessage;
-                } else {
-                    loadingStageEl.innerHTML = `<div class="ios-spinner"></div><span>${russianMessage}</span>`;
-                }
-            }
-            
-            // Show model loading indicator if needed
-            const modelLoadingIndicator = document.getElementById('model-loading-indicator');
-            if (progressData.status === 'loading') {
-                modelLoadingIndicator.style.display = 'block';
-            } else {
-                modelLoadingIndicator.style.display = 'none';
+            // We're still keeping the model download info if needed
+            if (progressData.status === 'error') {
+                // Show error if there's a problem
+                showError(progressData.message || "Произошла ошибка при обработке изображения");
+                hideLoading();
             }
         }
 
@@ -1013,18 +806,6 @@
             loadingEl.style.display = 'block';
             document.getElementById('loading-overlay').style.display = 'block';
             errorContainer.style.display = 'none';
-            
-            // Reset loading UI
-            const spanElement = loadingStageEl.querySelector('span');
-            if (spanElement) {
-                spanElement.textContent = "Подготовка изображения...";
-            } else {
-                loadingStageEl.innerHTML = `<div class="ios-spinner"></div><span>Подготовка изображения...</span>`;
-            }
-            loadingProgressBar.style.width = "0%";
-            modelDownloadInfo.style.display = 'none';
-            modelDownloadProgressBar.style.width = "0%";
-            document.getElementById('inference-progress-percent').textContent = "0%";
             
             // Disable scrolling on background
             document.body.style.overflow = 'hidden';
