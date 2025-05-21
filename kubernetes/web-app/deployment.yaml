@@ -53,12 +53,12 @@ spec:
         - name: MLFLOW_USERNAME
           valueFrom:
             secretKeyRef:
-              name: mlflow-credentials
+              name: tf-mlflow-credentials
               key: username
         - name: MLFLOW_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: mlflow-credentials
+              name: tf-mlflow-credentials
               key: password
         - name: MLFLOW_S3_ENDPOINT_URL
           value: "https://${DO_SPACES_REGION}.digitaloceanspaces.com"

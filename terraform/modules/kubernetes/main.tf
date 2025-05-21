@@ -185,7 +185,7 @@ resource "kubernetes_secret" "mlflow_credentials" {
   count = var.mlflow_username != "" && var.mlflow_password != "" ? 1 : 0
   
   metadata {
-    name      = "mlflow-credentials"
+    name      = "tf-mlflow-credentials"
     namespace = "monet-app"
   }
 
