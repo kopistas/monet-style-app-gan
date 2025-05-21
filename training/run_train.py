@@ -192,6 +192,106 @@ def train_cyclegan():
 def export_model():
     """Export the trained model to TorchScript format and log to MLflow."""
     print("Exporting model to TorchScript...")
+    try:
+        from cyclegan.models.networks import define_G
+        import re
+        from mlflow.tracking import MlflowClient
+
+        # Paths
+        ckpt_dir = os.path.join(MODELS_ROOT, EXP_NAME)
+        ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "*_net_G_A.pth")))
+
+        if not ckpts:
+            print("No checkpoints found. Make sure training completed successfully.")
+            return
+
+        ckpt_path = ckpts[-1]
+        print(f"Exporting checkpoint: {ckpt_path}")
+
+        # Initialize and load model
+        netG = define_G(
+            input_nc=3, output_nc=3, ngf=64,
+            netG="resnet_9blocks", norm="instance",
+            use_dropout=False, init_type="normal",
+            init_gain=0.02, gpu_ids=[]
+        ).cpu()
+
+        state = torch.load(ckpt_path, map_location="cpu")
+        state = state.get("state_dict", state)
+        state = {re.sub(r"^(module\.|netG\.|G_A\.)", "", k): v for k, v in state.items()}
+
+        missing, unexpected = netG.load_state_dict(state, strict=False)
+        print(f"Loaded with {len(missing)} missing & {len(unexpected)} unexpected keys")
+
+        # Trace TorchScript model
+        netG.eval()
+        dummy = torch.randn(1, 3, CROP_SIZE, CROP_SIZE)
+        ts = torch.jit.trace(netG, dummy)
+
+        # Save to models/ folder
+        export_dir = "models"
+        os.makedirs(export_dir, exist_ok=True)
+        out_pt = os.path.join(export_dir, "photo2monet_cyclegan.pt")
+        ts.save(out_pt)
+        print(f"TorchScript saved to {out_pt}")
+
+        if USE_MLFLOW:
+            if MLFLOW_USERNAME and MLFLOW_PASSWORD:
+                os.environ['MLFLOW_TRACKING_USERNAME'] = MLFLOW_USERNAME
+                os.environ['MLFLOW_TRACKING_PASSWORD'] = MLFLOW_PASSWORD
+
+            mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+            mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+
+            active_run = mlflow.active_run()
+            if active_run is None:
+                run = mlflow.start_run(run_name=EXP_NAME)
+            else:
+                run = active_run
+
+            try:
+                # Log full model directory
+                mlflow.log_artifacts(export_dir, artifact_path="models")
+
+                # Add metadata
+                mlflow.set_tag("model_type", "torchscript")
+                mlflow.set_tag("input_size", f"{CROP_SIZE}x{CROP_SIZE}")
+                mlflow.set_tag("checkpoint_source", os.path.basename(ckpt_path))
+
+                # Register model from artifact dir
+                model_uri = f"runs:/{run.info.run_id}/models"
+                registered_model_name = f"style_transfer_{EXP_NAME}"
+                print(f"Registering model from: {model_uri}")
+
+                registered_model = mlflow.register_model(
+                    model_uri=model_uri,
+                    name=registered_model_name
+                )
+
+                print(f"Model registered as '{registered_model_name}', version {registered_model.version}")
+
+                # Update description + set alias
+                client = MlflowClient()
+                client.update_registered_model(
+                    name=registered_model_name,
+                    description=f"Monet style transfer model (CycleGAN) trained with {EPOCHS} epochs."
+                )
+                # client.set_registered_model_alias(
+                #     name=registered_model_name,
+                #     alias="prod",  # or "prod", "latest", etc.
+                #     version=registered_model.version
+                # )
+                print(f"Alias 'prod' set for model version {registered_model.version}")
+
+            finally:
+                if active_run is None:
+                    mlflow.end_run()
+
+    except Exception as e:
+        print(f"Error exporting model: {e}")
+
+    """Export the trained model to TorchScript format and log to MLflow."""
+    print("Exporting model to TorchScript...")
     
     try:
         # Import necessary modules from the CycleGAN repo
