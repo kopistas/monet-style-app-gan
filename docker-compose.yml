@@ -8,17 +8,42 @@ services:
       - "5080:5080"
     volumes:
       - ./app:/app/app
-      - ./photo2monet_cyclegan_mark4.pt:/app/photo2monet_cyclegan_mark4.pt
+      - ./photo2monet_cyclegan.pt:/app/photo2monet_cyclegan.pt
       - ./models:/app/models
     env_file:
       - .env
     environment:
       - FLASK_APP=app/app.py
       - FLASK_ENV=production
-      - MODEL_PATH=/app/photo2monet_cyclegan_mark4.pt
+      - MODEL_PATH=/app/photo2monet_cyclegan.pt
       - S3_BUCKET=${S3_BUCKET}
       - S3_ENDPOINT=${S3_ENDPOINT}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - UNSPLASH_API_KEY=${UNSPLASH_API_KEY}
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+      - MLFLOW_USERNAME=${MLFLOW_USERNAME}
+      - MLFLOW_PASSWORD=${MLFLOW_PASSWORD}
     restart: unless-stopped 
+
+  # web-built:
+  #   image: ghcr.io/kopistas/monet-web-app:latest
+  #   container_name: monet-style-transfer-built
+  #   ports:
+  #     - "5080:5080"
+  #   volumes:
+  #     - ./app:/app/app
+  #     - ./photo2monet_cyclegan.pt:/app/photo2monet_cyclegan.pt
+  #     - ./models:/app/models
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - FLASK_APP=app/app.py
+  #     - FLASK_ENV=production
+  #     - MODEL_PATH=/app/photo2monet_cyclegan.pt
+  #     - S3_BUCKET=${S3_BUCKET}
+  #     - S3_ENDPOINT=${S3_ENDPOINT}
+  #     - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+  #     - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+  #     - UNSPLASH_API_KEY=${UNSPLASH_API_KEY}
+  #   restart: unless-stopped 

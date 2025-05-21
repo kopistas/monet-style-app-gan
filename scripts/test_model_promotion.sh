@@ -7,7 +7,7 @@ set -e
 
 if [ -z "$1" ]; then
   echo "Usage: $0 <model_path>"
-  echo "Example: $0 photo2monet_cyclegan_mark4.pt"
+  echo "Example: $0 photo2monet_cyclegan.pt"
   exit 1
 fi
 

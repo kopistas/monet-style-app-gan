@@ -13,7 +13,7 @@ Required environment variables:
 - AWS_REGION: S3 region
 
 Optional environment variables:
-- MODEL_PATH: Path to the model file (default: photo2monet_cyclegan_mark4.pt)
+- MODEL_PATH: Path to the model file (default: photo2monet_cyclegan.pt)
 - MODEL_DEST_PATH: Destination path in S3 (default: same as MODEL_PATH)
 """
 
@@ -51,7 +51,7 @@ def upload_model_to_s3():
         sys.exit(1)
         
     # Get optional environment variables
-    model_path = os.environ.get('MODEL_PATH', 'photo2monet_cyclegan_mark4.pt')
+    model_path = os.environ.get('MODEL_PATH', 'photo2monet_cyclegan.pt')
     model_dest_path = os.environ.get('MODEL_DEST_PATH', model_path)
     
     print(f"S3 Configuration:")

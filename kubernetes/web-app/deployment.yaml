@@ -45,9 +45,9 @@ spec:
               key: promoted_model
               optional: true
         - name: DEFAULT_MODEL_NAME
-          value: "photo2monet_cyclegan_mark4.pt"
+          value: "photo2monet_cyclegan.pt"
         - name: MODEL_TO_DOWNLOAD
-          value: "photo2monet_cyclegan_mark4.pt"
+          value: "photo2monet_cyclegan.pt"
         - name: MLFLOW_TRACKING_URI
           value: "https://${MLFLOW_DOMAIN}"
         - name: MLFLOW_USERNAME
@@ -148,7 +148,7 @@ metadata:
   name: model-config
   namespace: monet-app
 data:
-  promoted_model: "photo2monet_cyclegan_mark4.pt"
+  promoted_model: "photo2monet_cyclegan.pt"
   mlflow_model_name: "style_transfer_photo2monet_cyclegan"
 ---
 apiVersion: v1

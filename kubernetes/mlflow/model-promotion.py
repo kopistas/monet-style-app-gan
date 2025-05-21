@@ -133,8 +133,8 @@ def main():
     parser = argparse.ArgumentParser(description='Promote a model from MLflow to production')
     parser.add_argument('--model-name', required=True, help='Name of the model in MLflow')
     parser.add_argument('--model-version', required=True, help='Version of the model to promote')
-    parser.add_argument('--dest-path', default='photo2monet_cyclegan_mark4.pt', 
-                        help='Destination path in S3 (default: photo2monet_cyclegan_mark4.pt)')
+    parser.add_argument('--dest-path', default='photo2monet_cyclegan.pt', 
+                        help='Destination path in S3 (default: photo2monet_cyclegan.pt)')
     
     args = parser.parse_args()
     

@@ -202,7 +202,7 @@ def train_model():
                 print(f"Logged sample image for epoch {epoch+1}")
         
         # Save the model
-        model_path = "photo2monet_cyclegan_mark4.pt"
+        model_path = "photo2monet_cyclegan.pt"
         torch.jit.script(generator).save(model_path)
         mlflow.log_artifact(model_path)
         print(f"Model saved and logged to MLflow")

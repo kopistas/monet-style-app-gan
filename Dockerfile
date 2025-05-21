@@ -25,7 +25,7 @@ RUN mkdir -p app/uploads models
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV MODEL_PATH=/app/photo2monet_cyclegan_mark4.pt
+ENV MODEL_PATH=/app/photo2monet_cyclegan.pt
 
 # Make scripts executable
 RUN chmod +x scripts/*.py

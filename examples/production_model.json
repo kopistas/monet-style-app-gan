@@ -1,5 +1,5 @@
 {
-  "model_key": "models/photo2monet_cyclegan_mark4.pt",
+  "model_key": "models/photo2monet_cyclegan.pt",
   "version": "1.0.0",
   "promoted_at": "2023-09-25T14:30:00.123456",
   "info": {

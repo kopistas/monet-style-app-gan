@@ -624,7 +624,7 @@ jobs:
           MLFLOW_PASSWORD: ${{ secrets.MLFLOW_PASSWORD }}
         run: |
           pip install boto3 mlflow
-          python scripts/upload_base_model.py photo2monet_cyclegan_mark4.pt \
+          python scripts/upload_base_model.py photo2monet_cyclegan.pt \
             --model-name style_transfer_photo2monet_cyclegan \
             --aliases base prod
 

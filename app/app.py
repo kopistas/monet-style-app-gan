@@ -61,7 +61,7 @@ def handle_exception(e):
     return jsonify({"error": f"Внутренняя ошибка сервера: {str(e)}"}), 500
 
 # Configuration
-MODEL_PATH = os.getenv('MODEL_PATH', 'photo2monet_cyclegan_mark4.pt')
+MODEL_PATH = os.getenv('MODEL_PATH', 'photo2monet_cyclegan.pt')
 UPLOAD_FOLDER = 'app/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 UNSPLASH_API_KEY = os.getenv('UNSPLASH_API_KEY', '')
@@ -111,11 +111,11 @@ def check_model_exists():
     logger.info(f"Model at {MODEL_PATH}: {'EXISTS' if standard_exists else 'NOT FOUND'}")
     
     # Check alternative locations
-    app_models_path = "/app/models/photo2monet_cyclegan_mark4.pt"
+    app_models_path = "/app/models/photo2monet_cyclegan.pt"
     alt_exists = os.path.exists(app_models_path)
     logger.info(f"Model at {app_models_path}: {'EXISTS' if alt_exists else 'NOT FOUND'}")
     
-    root_model_path = "photo2monet_cyclegan_mark4.pt"
+    root_model_path = "photo2monet_cyclegan.pt"
     root_exists = os.path.exists(root_model_path)
     logger.info(f"Model at {root_model_path}: {'EXISTS' if root_exists else 'NOT FOUND'}")
     
@@ -580,26 +580,19 @@ def check_and_update_model():
         # Extract model filename from MLflow configuration
         artifact_name = os.getenv("MLFLOW_ARTIFACT_NAME", "photo2monet_cyclegan.pt")
         local_model_path = os.path.join(models_dir, artifact_name)
-        
-        # Check if we're already using the latest MLflow model
-        current_model_name = os.path.basename(MODEL_PATH)
-        if current_model_name == artifact_name and os.path.exists(MODEL_PATH):
-            logger.info(f"Already using MLflow model: {artifact_name}")
-        else:
-            logger.info(f"Attempting to download model from MLflow")
             
-            # Try prod alias first, fall back to base
-            if download_model_from_mlflow(local_model_path, alias="prod", fallback_alias="base"):
-                logger.info(f"Downloaded new model from MLflow to {local_model_path}")
-                # Update model path to use the new model
-                MODEL_PATH = local_model_path
+        # Try prod alias first, fall back to base
+        if download_model_from_mlflow(local_model_path, alias="prod", fallback_alias="base"):
+            logger.info(f"Downloaded new model from MLflow to {local_model_path}")
+            # Update model path to use the new model
+            MODEL_PATH = local_model_path
                 
-                # Unload the current model if it's loaded
-                unload_model()
+            # Unload the current model if it's loaded
+            unload_model()
                 
-                return True
-            else:
-                logger.warning("Failed to download model from MLflow, will try S3 fallback")
+            return True
+        else:
+            logger.warning("Failed to download model from MLflow, will try S3 fallback")
     else:
         logger.info("MLflow not configured, skipping MLflow model check")
     
@@ -913,6 +906,7 @@ def log_environment_variables():
         # MLflow variables
         'MLFLOW_TRACKING_URI',
         'MLFLOW_USERNAME',
+        'MLFLOW_PASSWORD',
         'MLFLOW_MODEL_NAME',
         'MLFLOW_ARTIFACT_NAME',
         'MLFLOW_S3_ENDPOINT_URL'
