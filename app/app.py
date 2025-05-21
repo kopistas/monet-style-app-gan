@@ -620,8 +620,7 @@ def check_and_update_model():
 
 def process_image(image: Image.Image):
     """
-    • ≤256 px  → fast path (single crop).
-    • >256 px → CPU tiling with 256-px tiles.
+    Resize image proportionally to fit within 256x256 and process it.
     Returns (result-dict, None) or (None, error-msg).
     """
     global gen, inference_progress
@@ -645,23 +644,19 @@ def process_image(image: Image.Image):
         t0 = time.time()
         inference_progress = {"status": "processing", "message": "Processing image"}
 
-        # Check image dimensions to prevent memory issues
+        # Resize image proportionally to fit within 256x256
         w, h = image.size
-        max_dim = 1920  # Maximum dimension to process
-        
-        if max(w, h) > max_dim:
-            ratio = max_dim / max(w, h)
+        if w > 256 or h > 256:
+            ratio = min(256 / w, 256 / h)
             new_w, new_h = int(w * ratio), int(h * ratio)
-            logger.info(f"Resizing large image from {w}x{h} to {new_w}x{new_h}")
+            logger.info(f"Resizing image from {w}x{h} to {new_w}x{new_h} to fit within 256x256")
             image = image.resize((new_w, new_h), Image.LANCZOS)
         
-        if max(image.size) <= 256:                       # small: old path
-            tin = prep(image).unsqueeze(0)               # stay on CPU
-            with torch.no_grad():
-                tout = gen(tin)[0]
-            out_img = T.ToPILImage()(denorm(tout))
-        else:                                            # large: tile path
-            out_img = stylize_tiles_cpu(image, tile=256, stride=224)
+        # Process the resized image
+        tin = prep(image).unsqueeze(0)  # stay on CPU
+        with torch.no_grad():
+            tout = gen(tin)[0]
+        out_img = T.ToPILImage()(denorm(tout))
 
         proc_time = time.time() - t0
 
